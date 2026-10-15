@@ -8,13 +8,21 @@ final class PetInteractionNSView: NSView {
     var onDragEnded: () -> Void = {}
     var onDragChanged: (Bool) -> Void = { _ in }
     var contextMenu: () -> NSMenu? = { nil }
+    /// Keyboard mode: returns true if the key was handled.
+    var onKey: (NSEvent) -> Bool = { _ in false }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if !onKey(event) { super.keyDown(with: event) }
+    }
 
     private var mouseDownScreen: NSPoint?
     private var windowOriginAtDown: NSPoint?
     private var isDragging = false
     private static let dragThreshold: CGFloat = 3
 
-    // The panel never becomes key, so the first click must count.
+    // The panel is normally never key, so the first click must count.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
@@ -67,6 +75,7 @@ struct PetInteractionView: NSViewRepresentable {
     var onDragChanged: (Bool) -> Void
     var onDragEnded: () -> Void
     var contextMenu: () -> NSMenu?
+    var onKey: (NSEvent) -> Bool = { _ in false }
 
     func makeNSView(context: Context) -> PetInteractionNSView {
         let view = PetInteractionNSView()
@@ -83,5 +92,6 @@ struct PetInteractionView: NSViewRepresentable {
         view.onDragChanged = onDragChanged
         view.onDragEnded = onDragEnded
         view.contextMenu = contextMenu
+        view.onKey = onKey
     }
 }

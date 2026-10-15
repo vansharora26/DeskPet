@@ -10,7 +10,7 @@ final class PetViewModel: ObservableObject {
 
     /// A short-lived reaction animation that overrides the idle loop.
     enum Reaction: Equatable {
-        case petted, eating, playing, waking, refused
+        case petted, eating, playing, waking, refused, celebrating, sipping
         var duration: TimeInterval {
             switch self {
             case .petted: return 1.6
@@ -18,6 +18,8 @@ final class PetViewModel: ObservableObject {
             case .playing: return 2.6
             case .waking: return 1.2
             case .refused: return 1.0
+            case .celebrating: return 2.8
+            case .sipping: return 1.4
             }
         }
     }
@@ -27,6 +29,15 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var reactionStart = Date()
     @Published private(set) var speech: String?
     @Published private(set) var lastSaveError: String?
+    /// Ongoing state from the app (focus, break, reminder) — set by the coordinator.
+    @Published var mode: PetMode = .none
+    @Published var coat: CoatTheme = .ginger
+    @Published var accessory: Accessory?
+    /// An actionable bubble (reminder, phase change). Takes priority over speech.
+    @Published private(set) var callout: PetCallout?
+    private var calloutQueue: [PetCallout] = []
+    /// Called when the user pets the cat (for small, capped XP).
+    var onPetted: () -> Void = {}
 
     var stats: PetStats { snapshot.stats }
     var isSleeping: Bool { snapshot.isSleeping }
@@ -43,6 +54,7 @@ final class PetViewModel: ObservableObject {
     private var recentPetTimes: [Date] = []
     private var lastChatter = Date()
     private var wakeObserver: NSObjectProtocol?
+    private var savingDisabled = false
 
     static let tickInterval: TimeInterval = 20
 
@@ -125,7 +137,9 @@ final class PetViewModel: ObservableObject {
     }
 
     private func maybeChatter(now: Date) {
-        guard settings.chattyEnabled, !snapshot.isSleeping, speech == nil, reaction == nil else { return }
+        // Stay quiet while the user is focusing or a reminder is showing.
+        guard settings.chattyEnabled, !snapshot.isSleeping, speech == nil, reaction == nil,
+              callout == nil, mode != .focused else { return }
         // Roughly one remark every few minutes; sooner if the pet needs something.
         let mood = stats.mood
         let minGap: TimeInterval = (mood == .hungry || mood == .tired) ? 90 : 180
@@ -144,6 +158,7 @@ final class PetViewModel: ObservableObject {
             return
         }
         PetEngine.pet(&snapshot.stats, recentPets: recentPetTimes.count - 1)
+        onPetted()
         react(.petted)
         say((recentPetTimes.count >= 6 ? Speech.pettedSpam : Speech.petted).randomElement())
         commit()
@@ -221,7 +236,7 @@ final class PetViewModel: ObservableObject {
 
     // MARK: - Reactions & speech
 
-    private func react(_ r: Reaction) {
+    func react(_ r: Reaction) {
         reaction = r
         reactionStart = Date()
         reactionTask?.cancel()
@@ -245,6 +260,52 @@ final class PetViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Callouts
+
+    /// Shows an actionable bubble. A newer callout of the same kind replaces the
+    /// old one (no duplicate reminders); different kinds queue up.
+    func show(_ c: PetCallout) {
+        if callout?.kind == c.kind || callout == nil {
+            callout = c
+        } else {
+            calloutQueue.removeAll { $0.kind == c.kind }
+            calloutQueue.append(c)
+        }
+    }
+
+    /// Removes a callout (by kind) whether it's showing or queued.
+    func clearCallout(kind: PetCallout.Kind) {
+        calloutQueue.removeAll { $0.kind == kind }
+        if callout?.kind == kind { advanceCallouts() }
+    }
+
+    func clearCallout(id: UUID) {
+        calloutQueue.removeAll { $0.id == id }
+        if callout?.id == id { advanceCallouts() }
+    }
+
+    private func advanceCallouts() {
+        callout = calloutQueue.isEmpty ? nil : calloutQueue.removeFirst()
+    }
+
+    func chime(_ effect: SoundPlayer.Effect) { sound.play(effect) }
+
+    /// "Delete all data": remove the saved pet and stop writing it until relaunch.
+    func eraseAndStopSaving() {
+        savingDisabled = true
+        tickTimer?.invalidate()
+        store.delete()
+    }
+
+    /// Small, positive effect of real habits on the pet's needs.
+    func boost(happiness: Double = 0, energy: Double = 0, hunger: Double = 0) {
+        guard !snapshot.isSleeping else { return }
+        snapshot.stats.happiness += happiness
+        snapshot.stats.energy += energy
+        snapshot.stats.hunger += hunger
+        commit()
+    }
+
     // MARK: - Persistence
 
     private func commit() {
@@ -253,6 +314,7 @@ final class PetViewModel: ObservableObject {
     }
 
     private func save() {
+        guard !savingDisabled else { return }
         do {
             try store.save(snapshot)
             lastSaveError = nil

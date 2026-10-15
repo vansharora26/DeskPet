@@ -1,15 +1,18 @@
 import AppKit
 
-/// The paw-print item in the menu bar. Its menu is rebuilt each time it opens.
+/// The paw-print item in the menu bar. Its menu is rebuilt each time it opens,
+/// so stats, timers and titles are always current.
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let menu = NSMenu()
     private let pet: PetViewModel
+    private let model: AppModel
     private let actions: PetMenu.Actions
 
-    init(pet: PetViewModel, actions: PetMenu.Actions) {
+    init(pet: PetViewModel, model: AppModel, actions: PetMenu.Actions) {
         self.pet = pet
+        self.model = model
         self.actions = actions
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -24,6 +27,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        PetMenu.populateStatusMenu(menu, pet: pet, actions: actions)
+        PetMenu.build(into: menu, pet: pet, model: model, actions: actions, includeAppItems: true)
     }
 }

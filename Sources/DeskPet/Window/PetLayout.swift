@@ -5,10 +5,10 @@ import CoreGraphics
 struct PetLayout: Equatable {
     let pixel: CGFloat
 
-    static let bubbleHeight: CGFloat = 64
+    static let bubbleHeight: CGFloat = 96   // room for a 2-line callout with buttons
     static let gap: CGFloat = 4
     static let barHeight: CGFloat = 34
-    static let barWidth: CGFloat = 156
+    static let barWidth: CGFloat = 188
 
     /// Headroom above the cat so the biggest hop (5 sprite px) never reaches the bubble.
     var hopRoom: CGFloat { (pixel * 5 + 4).rounded() }
@@ -41,9 +41,10 @@ struct PetLayout: Equatable {
     /// The cat's clickable silhouette: body block plus the tail block.
     var catHitRects: [CGRect] {
         let o = catOrigin
+        let top = CGFloat(CatSprite.top) * pixel
         return [
-            CGRect(x: o.x, y: o.y, width: 18 * pixel, height: 19 * pixel),
-            CGRect(x: o.x + 17 * pixel, y: o.y + 9 * pixel, width: 7 * pixel, height: 10 * pixel),
+            CGRect(x: o.x, y: o.y + top, width: 18 * pixel, height: 19 * pixel),
+            CGRect(x: o.x + 17 * pixel, y: o.y + top + 9 * pixel, width: 7 * pixel, height: 10 * pixel),
         ]
     }
 

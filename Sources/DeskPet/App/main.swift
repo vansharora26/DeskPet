@@ -25,6 +25,10 @@ MainActor.assumeIsolated {
         }
     }
 
+    if args.contains("--self-test") {
+        exit(SelfTest.run())
+    }
+
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate

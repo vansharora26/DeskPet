@@ -41,4 +41,16 @@ enum Speech {
         case .content: return ["Mrrp.", "Just vibing.", "Is that a mouse? Oh, it's the cursor.", "Remember to drink water!", "Stretch break?"]
         }
     }
+
+    // MARK: DeskPet 2.0 — reactions to real, recorded events
+
+    static let waterLogged = ["Gulp gulp! 💧", "Refreshing!", "Hydration high-five!", "Sip logged. Nice!", "Splash! Good one."]
+    static let waterGoal = ["Water goal reached! 🎉", "You did it — goal met!", "Hydration champion!"]
+    static let focusStarted = ["Focus mode on. I’ll keep quiet.", "Let’s do this. Headband on!", "Deep work time. Shh…"]
+    static let focusDone = ["Session complete! 🎉", "Nailed it! Time to stretch.", "Focus session done — proud of you!"]
+    static let breakStarted = ["Break time! Stretch, sip, look far away.", "Paws up — break time.", "Rest those eyes for a bit."]
+    static let breakDone = ["Break’s over — ready when you are.", "Refreshed? Let’s go again."]
+    static let taskDone = ["Done and dusted ✓", "One less thing!", "Task complete — nice!", "Checked off!"]
+    static let saved = ["Got it, saved!", "Tucked away safely.", "Noted!"]
+    static let movementDone = ["Stretchy! Feels good, right?", "Movement logged. Wiggle on!"]
 }

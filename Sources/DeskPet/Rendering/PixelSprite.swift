@@ -123,7 +123,27 @@ enum PropSprites {
         ".YYYY.",
     ])
 
+    static let droplet = PixelSprite([
+        "..B..",
+        ".BBB.",
+        "BBWBB",
+        "BWBBB",
+        ".BBB.",
+    ])
+
+    static let mug = PixelSprite([
+        ".W.W..",
+        "W.W...",
+        "KKKKK.",
+        "KRRRKK",
+        "KRWRK.K",
+        "KRRRKK",
+        ".KKK..",
+    ])
+
     static let heartImage = heart.makeImage()
+    static let dropletImage = droplet.makeImage()
+    static let mugImage = mug.makeImage()
     static let fishImage = fish.makeImage()
     static let yarnImage = yarn.makeImage()
 }

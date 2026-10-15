@@ -2,17 +2,30 @@ import AppKit
 import DeskPetCore
 import SwiftUI
 
-/// The whole floating scene: speech bubble, animated cat with props, and the
-/// hover action bar. Positions come from PetLayout so hit-testing matches.
+/// What the hover bar and badge can do. Supplied by the coordinator.
+struct PetBarActions {
+    var logWater: () -> Void
+    var toggleFocus: () -> Void
+    var openFocus: () -> Void
+    var openChat: () -> Void
+    var openCapture: () -> Void
+    var moreMenu: () -> NSMenu?
+}
+
+/// The whole floating scene: speech or callout bubble, animated cat with props,
+/// and the hover action bar / focus badge. Positions come from PetLayout so
+/// click-through hit-testing matches exactly.
 struct PetView: View {
     @ObservedObject var pet: PetViewModel
     @ObservedObject var windowState: PetWindowState
     @ObservedObject var settings: AppSettings
+    @ObservedObject var model: AppModel
     let driver: PetAnimationDriver
     var onDragChanged: (Bool) -> Void
     var onDragEnded: () -> Void
     var contextMenu: () -> NSMenu?
-    var onOpenSettings: () -> Void
+    var actions: PetBarActions
+    var onKey: (NSEvent) -> Bool
 
     var body: some View {
         let layout = windowState.layout
@@ -21,53 +34,89 @@ struct PetView: View {
         ZStack(alignment: .topLeading) {
             Color.clear
 
-            // Speech bubble, centred over the cat's body.
+            // Bubble area, centred over the cat's body.
             ZStack(alignment: .bottom) {
-                if let line = pet.speech {
+                if let callout = pet.callout {
+                    CalloutBubble(callout: callout, onClose: {
+                        callout.onDismiss?()
+                        pet.clearCallout(id: callout.id)
+                    })
+                    .id(callout.id)
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: CalloutFrameKey.self, value: proxy.frame(in: .named("pet")))
+                    })
+                    .transition(animate ? .scale(scale: 0.7, anchor: .bottom).combined(with: .opacity) : .opacity)
+                } else if let line = pet.speech {
                     SpeechBubble(text: line)
                         .id(line)
+                        .allowsHitTesting(false)
                         .transition(animate ? .scale(scale: 0.6, anchor: .bottom).combined(with: .opacity) : .opacity)
                 }
             }
             .frame(width: layout.windowSize.width - 12,
-                   height: layout.bubbleAreaHeight(lifted: pet.reaction == .playing), alignment: .bottom)
+                   height: layout.bubbleAreaHeight(lifted: pet.reaction == .playing || pet.reaction == .celebrating),
+                   alignment: .bottom)
             .padding(.leading, 6)
-            .allowsHitTesting(false)
 
             // Animated cat + props. Rendering only; input is handled below.
             PetStageHost(driver: driver)
-            .padding(.leading, layout.catOrigin.x)
-            .padding(.top, layout.catOrigin.y)
-            .allowsHitTesting(false)
+                .padding(.leading, layout.catOrigin.x)
+                .padding(.top, layout.catOrigin.y)
+                .allowsHitTesting(false)
 
             // Static input layer exactly over the cat (doesn't hop with it).
             PetInteractionView(
                 onClick: { pet.pet() },
                 onDragChanged: onDragChanged,
                 onDragEnded: onDragEnded,
-                contextMenu: contextMenu
+                contextMenu: contextMenu,
+                onKey: onKey
             )
             .frame(width: layout.catSize.width, height: layout.catSize.height)
+            .overlay {
+                if windowState.keyboardMode {
+                    RoundedRectangle(cornerRadius: 10).strokeBorder(DP.accent, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.leading, layout.catOrigin.x)
             .padding(.top, layout.catOrigin.y)
             .accessibilityElement()
             .accessibilityLabel("\(pet.name) the cat")
-            .accessibilityHint("Click to pet. Drag to move. Right-click for options.")
+            .accessibilityHint("Click to pet. Drag to move. Right-click for the menu.")
             .accessibilityAddTraits(.isButton)
 
-            if windowState.isHovered && !windowState.isDragging {
-                ActionBar(pet: pet, onOpenSettings: onOpenSettings)
-                    .frame(width: layout.barFrame.width, height: layout.barFrame.height)
-                    .padding(.leading, layout.barFrame.minX)
-                    .padding(.top, layout.barFrame.minY)
-                    .transition(.opacity.combined(with: .offset(y: animate ? 6 : 0)))
+            Group {
+                if windowState.isHovered && !windowState.isDragging {
+                    ActionBar(model: model, actions: actions)
+                        .transition(.opacity.combined(with: .offset(y: animate ? 6 : 0)))
+                } else if let timer = model.focusTimerState, !windowState.isDragging {
+                    FocusBadge(timer: timer, onTap: actions.openFocus)
+                        .transition(.opacity)
+                }
             }
+            .frame(width: layout.barFrame.width, height: layout.barFrame.height)
+            .padding(.leading, layout.barFrame.minX)
+            .padding(.top, layout.barFrame.minY)
         }
         .frame(width: layout.windowSize.width, height: layout.windowSize.height)
+        .coordinateSpace(name: "pet")
+        .onPreferenceChange(CalloutFrameKey.self) { frame in
+            windowState.calloutFrame = pet.callout == nil ? nil : frame
+        }
+        .onChange(of: pet.callout?.id) { _, id in if id == nil { windowState.calloutFrame = nil } }
+        .onChange(of: model.focusTimerState != nil) { _, active in windowState.badgeVisible = active }
+        .onAppear { windowState.badgeVisible = model.focusTimerState != nil }
         .animation(animate ? .spring(response: 0.3, dampingFraction: 0.7) : nil, value: pet.speech)
+        .animation(animate ? .spring(response: 0.3, dampingFraction: 0.75) : nil, value: pet.callout?.id)
         .animation(.easeOut(duration: 0.18), value: windowState.isHovered)
         .animation(animate ? .easeOut(duration: 0.2) : nil, value: pet.reaction)
     }
+}
+
+struct CalloutFrameKey: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) { value = nextValue() ?? value }
 }
 
 /// Cat plus reaction props for a single moment in time. Built from plain
@@ -79,6 +128,10 @@ struct PetStage: View, Equatable {
         case petted(age: TimeInterval)
         case eating(age: TimeInterval)
         case playing(age: TimeInterval)
+        case confetti(age: TimeInterval)
+        case sip(age: TimeInterval)
+        case droplet(t: TimeInterval)
+        case mug(t: TimeInterval)
     }
 
     let frame: PetFrame
@@ -100,6 +153,7 @@ struct PetStage: View, Equatable {
     @ViewBuilder
     private var propsView: some View {
         let p = pixel
+        let top = Double(CatSprite.top)
         switch props {
         case .none:
             EmptyView()
@@ -110,7 +164,7 @@ struct PetStage: View, Equatable {
                     .font(.system(size: p * (2.4 + phase * 1.6), weight: .heavy, design: .monospaced))
                     .foregroundStyle(PixelPalette.outline.opacity(0.85))
                     .opacity(animate ? sin(phase * .pi) : 1)
-                    .offset(x: p * (15 + phase * 5), y: p * (1 - phase * 9))
+                    .offset(x: p * (15 + phase * 5), y: p * (top + 1 - phase * 9))
             }
         case .petted(let age):
             ForEach(0..<3, id: \.self) { i in
@@ -120,7 +174,7 @@ struct PetStage: View, Equatable {
                     // Hearts drift up from alternating cheeks, staying clear of the bubble.
                     PixelImageView(image: PropSprites.heartImage, pixel: p * 0.6)
                         .offset(x: p * (i % 2 == 0 ? -3.5 + Double(i) * 0.5 : 17.5),
-                                y: p * (6 - progress * 7))
+                                y: p * (top + 6 - progress * 7))
                         .opacity(1 - progress)
                 }
             }
@@ -128,14 +182,52 @@ struct PetStage: View, Equatable {
             let eaten = animate ? min(1, age / PetViewModel.Reaction.eating.duration) : 0.3
             PixelImageView(image: PropSprites.fishImage, pixel: p * 0.85)
                 .scaleEffect(x: -(1 - eaten * 0.85), y: 1 - eaten * 0.5, anchor: .trailing)
-                .offset(x: -p * 8, y: p * 8.5)
+                .offset(x: -p * 8, y: p * (top + 8.5))
                 .opacity(1 - eaten * 0.7)
         case .playing(let age):
             let bounce = animate ? abs(sin(age * .pi * 2.2 + .pi / 2)) : 0
             PixelImageView(image: PropSprites.yarnImage, pixel: p * 0.8)
                 .rotationEffect(.degrees(animate ? age * 360 : 0))
-                .offset(x: -p * (5 + sin(age * 3) * 1.5), y: p * (15 - bounce * 7))
+                .offset(x: -p * (5 + sin(age * 3) * 1.5), y: p * (top + 15 - bounce * 7))
+        case .confetti(let age):
+            ForEach(0..<14, id: \.self) { i in
+                ConfettiBit(index: i, age: age, pixel: p)
+            }
+        case .sip(let age):
+            let progress = min(1, age / PetViewModel.Reaction.sipping.duration)
+            // A droplet drifts down to the mouth and disappears.
+            PixelImageView(image: PropSprites.dropletImage, pixel: p * 0.7)
+                .offset(x: p * 7.3, y: p * (top + 5.5 + progress * 3.5))
+                .opacity(1 - progress * progress)
+        case .droplet(let t):
+            PixelImageView(image: PropSprites.dropletImage, pixel: p * 0.8)
+                .offset(x: p * 16.5, y: p * (top - 2 + sin(t * 3) * 0.6))
+        case .mug(let t):
+            ZStack(alignment: .topLeading) {
+                PixelImageView(image: PropSprites.mugImage, pixel: p * 0.8)
+            }
+            .offset(x: -p * 5.5, y: p * (top + 13 + (animate ? sin(t * 1.5) * 0.15 : 0)))
         }
+    }
+}
+
+/// One falling confetti square (deterministic per index, so frames compare equal).
+private struct ConfettiBit: View {
+    let index: Int
+    let age: TimeInterval
+    let pixel: CGFloat
+    private static let colors: [Color] = [.pink, .yellow, .mint, .orange, .purple, .cyan]
+
+    var body: some View {
+        let x = Double((index * 37) % 28) - 3
+        let fall = (age * 7 + Double(index) * 1.7).truncatingRemainder(dividingBy: 16)
+        let fade = max(0, 1 - age / PetViewModel.Reaction.celebrating.duration)
+        Rectangle()
+            .fill(Self.colors[index % Self.colors.count])
+            .frame(width: pixel * 0.8, height: pixel * 0.8)
+            .rotationEffect(.degrees(Double(index) * 40 + age * 180))
+            .offset(x: pixel * x, y: pixel * (fall - 2))
+            .opacity(fade)
     }
 }
 
@@ -145,28 +237,99 @@ private struct PetStageHost: View {
     var body: some View { driver.stage }
 }
 
-/// Retro-styled speech bubble with a little tail.
+// MARK: - Bubbles
+
+/// Retro-styled speech bubble with a little tail. Adapts to light/dark.
 struct SpeechBubble: View {
     var text: String
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Text(text)
             .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(PixelPalette.outline)
+            .foregroundStyle(scheme == .dark ? Color.white : PixelPalette.outline)
             .multilineTextAlignment(.center)
             .lineLimit(2)
             .minimumScaleFactor(0.8)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(
-                BubbleShape()
-                    .fill(Color(red: 1, green: 0.99, blue: 0.96))
-                    .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
-            )
-            .overlay(BubbleShape().stroke(PixelPalette.outline, lineWidth: 2))
+            .background(BubbleShape().fill(BubbleColors.fill(scheme)).shadow(color: .black.opacity(0.18), radius: 3, y: 1))
+            .overlay(BubbleShape().stroke(BubbleColors.stroke(scheme), lineWidth: 2))
             .padding(.bottom, BubbleShape.tailHeight)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(text)
+    }
+}
+
+enum BubbleColors {
+    static func fill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(red: 0.17, green: 0.15, blue: 0.14) : Color(red: 1, green: 0.99, blue: 0.96)
+    }
+    static func stroke(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(red: 0.95, green: 0.62, blue: 0.3) : PixelPalette.outline
+    }
+}
+
+/// A bubble with real buttons: reminders, phase changes, briefings.
+struct CalloutBubble: View {
+    var callout: PetCallout
+    var onClose: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: callout.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(callout.kind == .hydration ? DP.water : (callout.kind == .movement ? DP.mint : DP.accent))
+                Text(callout.message)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(scheme == .dark ? Color.white : PixelPalette.outline)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button(action: onClose) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss")
+            }
+            if !callout.actions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(callout.actions) { action in
+                        Button(action.title) { action.handler() }
+                            .buttonStyle(CalloutButtonStyle(primary: action.isPrimary))
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 228)
+        .background(BubbleShape().fill(BubbleColors.fill(scheme)).shadow(color: .black.opacity(0.2), radius: 4, y: 1))
+        .overlay(BubbleShape().stroke(BubbleColors.stroke(scheme), lineWidth: 2))
+        .padding(.bottom, BubbleShape.tailHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct CalloutButtonStyle: ButtonStyle {
+    var primary: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .foregroundStyle(primary ? Color.white : DP.accent)
+            .background(Capsule().fill(primary ? DP.accent : DP.accent.opacity(0.14)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(Capsule())
     }
 }
 
@@ -187,23 +350,30 @@ struct BubbleShape: Shape {
     }
 }
 
-/// Compact hover bar: Feed · Play · Sleep/Wake · Settings.
+// MARK: - Bar & badge
+
+/// Compact hover bar: Water · Focus · Chat · Capture · More.
 private struct ActionBar: View {
-    @ObservedObject var pet: PetViewModel
-    var onOpenSettings: () -> Void
+    @ObservedObject var model: AppModel
+    var actions: PetBarActions
 
     var body: some View {
+        let timer = model.focusTimerState
         HStack(spacing: 4) {
-            ActionButton(symbol: "fork.knife", label: "Feed", action: pet.feed)
-            ActionButton(symbol: "teddybear.fill", label: "Play", action: pet.play)
-            ActionButton(symbol: pet.isSleeping ? "sun.max.fill" : "moon.zzz.fill",
-                         label: pet.isSleeping ? "Wake up" : "Nap", action: pet.toggleSleep)
-            ActionButton(symbol: "gearshape.fill", label: "Settings", action: onOpenSettings)
+            ActionButton(symbol: "drop.fill",
+                         label: "Log \(model.hydrationSettings.defaultServingML) ml of water",
+                         action: actions.logWater)
+            ActionButton(symbol: timer == nil ? "timer" : (timer!.isRunning ? "pause.fill" : "play.fill"),
+                         label: timer == nil ? "Start focus" : (timer!.isRunning ? "Pause timer" : "Resume timer"),
+                         action: actions.toggleFocus)
+            ActionButton(symbol: "bubble.left.and.text.bubble.right.fill", label: "Chat", action: actions.openChat)
+            ActionButton(symbol: "square.and.pencil", label: "Quick capture", action: actions.openCapture)
+            MoreButton(menu: actions.moreMenu)
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Capsule().fill(.regularMaterial))
-        .overlay(Capsule().strokeBorder(PixelPalette.outline.opacity(0.25), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
         .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
     }
 }
@@ -219,16 +389,69 @@ private struct ActionButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .semibold))
                 .frame(width: 30, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(hovering ? PixelPalette.orange.opacity(0.3) : .clear)
-                )
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(hovering ? DP.accent.opacity(0.22) : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(PixelPalette.outline)
+        .foregroundStyle(.primary)
         .help(label)
         .accessibilityLabel(label)
         .onHover { hovering = $0 }
+    }
+}
+
+/// "More" pops the full pet menu right under the button.
+private struct MoreButton: NSViewRepresentable {
+    var menu: () -> NSMenu?
+
+    func makeNSView(context: Context) -> NSButton {
+        let b = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "More")!,
+                         target: context.coordinator, action: #selector(Coordinator.click(_:)))
+        b.isBordered = false
+        b.imagePosition = .imageOnly
+        b.symbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        b.toolTip = "More"
+        b.setAccessibilityLabel("More options")
+        return b
+    }
+
+    func updateNSView(_ b: NSButton, context: Context) { context.coordinator.menu = menu }
+    func makeCoordinator() -> Coordinator { Coordinator(menu: menu) }
+
+    final class Coordinator: NSObject {
+        var menu: () -> NSMenu?
+        init(menu: @escaping () -> NSMenu?) { self.menu = menu }
+        @MainActor @objc func click(_ sender: NSButton) {
+            guard let m = menu() else { return }
+            m.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+        }
+    }
+}
+
+/// Shown under the cat while a focus/break timer is active.
+private struct FocusBadge: View {
+    var timer: FocusTimer
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                HStack(spacing: 5) {
+                    Image(systemName: timer.phase.isBreak ? "cup.and.saucer.fill" : (timer.isRunning ? "timer" : "pause.fill"))
+                    Text(CommandExecutor.clock(timer.remaining(at: ctx.date)))
+                        .monospacedDigit()
+                }
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .foregroundStyle(.white)
+                .background(Capsule().fill(timer.phase.isBreak ? DP.mint : DP.accent))
+                .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                .accessibilityLabel("\(timer.phase.title), \(CommandExecutor.clock(timer.remaining(at: ctx.date))) remaining")
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Open Focus")
     }
 }

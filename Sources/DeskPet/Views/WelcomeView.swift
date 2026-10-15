@@ -1,47 +1,64 @@
+import DeskPetCore
 import SwiftUI
 
-/// First-launch introduction. Also reachable later via "Welcome Tour".
+/// First-launch introduction (and a "what's new" for 1.0 users).
 struct WelcomeView: View {
     @ObservedObject var pet: PetViewModel
     @ObservedObject var settings: AppSettings
     @ObservedObject var loginItem: LoginItemManager
+    @ObservedObject var model: AppModel
+    @ObservedObject var notifications: NotificationManager
+    var isUpgrade: Bool
     var onFinish: () -> Void
 
     @State private var name = ""
+    @State private var goal = 2000
 
     var body: some View {
-        VStack(spacing: 18) {
-            WelcomeCat()
+        VStack(spacing: 16) {
+            WelcomeCat(coat: pet.coat)
                 .offset(x: 9) // centre the body rather than body + tail
-                .padding(.top, 8)
+                .padding(.top, 4)
 
             VStack(spacing: 6) {
-                Text("Meet your DeskPet")
+                Text(isUpgrade ? "DeskPet 2.0 is here" : "Meet your DeskPet")
                     .font(.system(size: 26, weight: .bold, design: .rounded))
-                Text("A tiny friend who hangs out on your desktop while you work.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                Text(isUpgrade ? "Same \(pet.name), now with water tracking, focus sessions, notes, and an assistant."
+                               : "A tiny friend who helps you sip, focus and remember — right on your desktop.")
+                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
 
-            HStack {
-                Text("Name").foregroundStyle(.secondary)
-                TextField("Biscuit", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .onSubmit(finish)
+            if !isUpgrade {
+                HStack {
+                    Text("Name").foregroundStyle(.secondary)
+                    TextField("Biscuit", text: $name).textFieldStyle(.roundedBorder).frame(width: 180).onSubmit(finish)
+                }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Tip(symbol: "hand.tap.fill", text: "**Click** to pet. **Drag** to move anywhere.")
-                Tip(symbol: "cursorarrow.motionlines", text: "**Hover** for Feed, Play, Nap and Settings.")
-                Tip(symbol: "contextualmenu.and.cursorarrow", text: "**Right-click** to see how your pet is feeling.")
-                Tip(symbol: "pawprint.fill", text: "The **paw** in the menu bar shows or hides your pet.")
+            VStack(alignment: .leading, spacing: 9) {
+                Tip(symbol: "hand.tap.fill", text: "**Click** to pet, **drag** to move, **right-click** for everything.")
+                Tip(symbol: "drop.fill", text: "**⌃⌥W** logs a glass of water from anywhere.")
+                Tip(symbol: "command", text: "**⌃⌥Space** opens the launcher: “focus for 30 minutes”, “remind me to call Sam at 6 pm”.")
+                Tip(symbol: "square.and.pencil", text: "**⌃⌥N** captures a note in seconds. **⌃⌥C** opens chat.")
+                Tip(symbol: "lock.shield.fill", text: "Everything stays on your Mac. AI is optional and off until you add a key.")
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.5)))
 
             VStack(alignment: .leading, spacing: 6) {
+                Stepper("Daily water goal: \(AppCommand.formatML(goal))", value: $goal, in: HydrationSettings.targetRange, step: 250)
+                Toggle("Water reminders on the pet", isOn: Binding(
+                    get: { model.hydrationSettings.remindersEnabled },
+                    set: { v in model.updateHydrationSettings { $0.remindersEnabled = v } }))
+                if NotificationManager.isSupported {
+                    Toggle("Also use macOS notifications", isOn: Binding(
+                        get: { settings.systemNotifications },
+                        set: { on in
+                            settings.systemNotifications = on
+                            if on { Task { _ = await notifications.requestAuthorization() } }
+                        }))
+                }
                 Toggle("Sound effects", isOn: $settings.soundEnabled)
                 Toggle("Open at login", isOn: Binding(
                     get: { loginItem.isEnabled || loginItem.needsApproval },
@@ -52,41 +69,49 @@ struct WelcomeView: View {
             .controlSize(.small)
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            Text("The water goal is a personal setting, not medical advice. You can change anything later in Settings.")
+                .font(DP.caption).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+
             Button(action: finish) {
-                Text("Let's go!").frame(maxWidth: .infinity)
+                Text("Let’s go!").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(PixelPalette.stripe)
+            .tint(DP.accent)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(28)
-        .frame(width: 400)
-        .onAppear { name = pet.name; loginItem.refresh() }
+        .padding(26)
+        .frame(width: 440)
+        .onAppear {
+            name = pet.name
+            goal = model.hydrationSettings.dailyTargetML
+            loginItem.refresh()
+        }
     }
 
     private func finish() {
-        pet.rename(name)
+        if !isUpgrade { pet.rename(name) }
+        model.updateHydrationSettings { $0.dailyTargetML = goal }
         onFinish()
     }
 }
 
 /// Waving hello. Updates only when the pose actually changes, to stay light.
 private struct WelcomeCat: View {
-    @State private var pose = WelcomeCat.pose(at: Date())
+    var coat: CoatTheme
+    @State private var tick = Date()
     private let timer = Timer.publish(every: 1.0 / 6.0, tolerance: 0.03, on: .main, in: .common).autoconnect()
 
-    static func pose(at date: Date) -> CatPose {
+    private func pose(at date: Date) -> CatPose {
         let t = date.timeIntervalSinceReferenceDate
         return CatPose(eyes: PetAnimator.isBlinking(t) ? .blink : .happy,
-                       mouthOpen: true, blush: true, tailFrame: Int(t / 0.5) % 2)
+                       mouthOpen: true, blush: true, tailFrame: Int(t / 0.5) % 2, coat: coat)
     }
 
     var body: some View {
-        CatCanvas(pose: pose, pixel: 6)
+        CatCanvas(pose: pose(at: tick), pixel: 5)
             .onReceive(timer) { date in
-                let next = Self.pose(at: date)
-                if next != pose { pose = next }
+                if pose(at: date) != pose(at: tick) { tick = date }
             }
     }
 }
@@ -96,11 +121,9 @@ private struct Tip: View {
     var text: LocalizedStringKey
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .frame(width: 22)
-                .foregroundStyle(PixelPalette.stripe)
-            Text(text)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol).frame(width: 22).foregroundStyle(DP.accent)
+            Text(text).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

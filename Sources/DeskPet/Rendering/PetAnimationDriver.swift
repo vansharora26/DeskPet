@@ -45,6 +45,7 @@ final class PetAnimationDriver: ObservableObject {
         guard animate, windowState.isVisible else { return 0 }
         if pet.reaction != nil { return 15 }  // hops, hearts, chewing
         if pet.isSleeping { return 10 }       // drifting z's
+        if pet.mode == .thirsty || pet.mode == .resting { return 8 } // bobbing droplet, steam
         return 6                              // blinks & tail swish (blinks outlast a frame)
     }
 
@@ -74,18 +75,27 @@ final class PetAnimationDriver: ObservableObject {
         let age = max(0, now.timeIntervalSince(pet.reactionStart))
         let frame = PetAnimator.frame(at: t, .init(
             reaction: pet.reaction, reactionAge: age, sleeping: pet.isSleeping,
-            mood: pet.stats.mood, hovered: windowState.isHovered, animate: animate))
+            mood: pet.stats.mood, mode: pet.mode, hovered: windowState.isHovered, animate: animate,
+            coat: pet.coat, accessory: pet.accessory))
 
         let props: PetStage.Props
+        let a = animate ? age : 0.4
+        let loop = animate ? t : 0
         if pet.isSleeping {
-            props = .sleeping(t: animate ? t : 0)
+            props = .sleeping(t: loop)
         } else {
-            let a = animate ? age : 0.4
             switch pet.reaction {
             case .petted: props = .petted(age: a)
             case .eating: props = .eating(age: a)
             case .playing: props = .playing(age: a)
-            default: props = .none
+            case .celebrating: props = .confetti(age: a)
+            case .sipping: props = .sip(age: a)
+            default:
+                switch pet.mode {
+                case .thirsty: props = .droplet(t: loop)
+                case .resting: props = .mug(t: loop)
+                default: props = .none
+                }
             }
         }
         let next = PetStage(frame: frame, props: props, animate: animate, pixel: windowState.layout.pixel)

@@ -11,6 +11,12 @@ final class PetWindowState: ObservableObject {
     @Published var isDragging = false
     /// Lets the animation timeline pause entirely while hidden.
     @Published var isVisible = false
+    /// Frame of an actionable callout (window coordinates, top-left origin) — clickable.
+    var calloutFrame: CGRect?
+    /// The focus badge under the cat is visible (and clickable).
+    var badgeVisible = false
+    /// Keyboard mode: the pet panel may become key so arrows/space work.
+    @Published var keyboardMode = false
 
     init(layout: PetLayout) { self.layout = layout }
 }
@@ -82,6 +88,30 @@ final class PetWindowController {
     /// Moves the pet back to its default corner of the main screen.
     func resetPosition() {
         panel.setFrameOrigin(Self.defaultOrigin(for: state.layout.windowSize))
+        clampToScreen(animate: false)
+        saveOrigin()
+    }
+
+    // MARK: - Keyboard
+
+    /// Lets the pet take keyboard focus (arrows move, Space pets, Esc exits).
+    func setKeyboardMode(_ on: Bool) {
+        state.keyboardMode = on
+        panel.allowsKey = on
+        if on {
+            panel.ignoresMouseEvents = false
+            panel.makeKeyAndOrderFront(nil)
+            if let view = panel.contentView?.firstDescendant(ofType: PetInteractionNSView.self) {
+                panel.makeFirstResponder(view)
+            }
+        } else {
+            panel.resignKey()
+        }
+    }
+
+    /// Moves the pet by a few points (keyboard arrows), staying on screen.
+    func nudge(dx: CGFloat, dy: CGFloat) {
+        panel.setFrameOrigin(NSPoint(x: panel.frame.minX + dx, y: panel.frame.minY + dy))
         clampToScreen(animate: false)
         saveOrigin()
     }
@@ -186,14 +216,15 @@ final class PetWindowController {
         let layout = state.layout
 
         let overCat = f.contains(mouse) && layout.catHitRects.contains { $0.contains(p) }
-        let overBar = state.isHovered && layout.barFrame.insetBy(dx: -4, dy: -4).contains(p)
+        let overBar = (state.isHovered || state.badgeVisible) && layout.barFrame.insetBy(dx: -4, dy: -4).contains(p)
+        let overCallout = state.calloutFrame.map { $0.insetBy(dx: -2, dy: -2).contains(p) } ?? false
         let now = Date()
         if overCat || overBar { lastInsideAt = now }
 
         let hovered = overCat || overBar || state.isDragging || now.timeIntervalSince(lastInsideAt) < Self.hoverLinger
         if state.isHovered != hovered { state.isHovered = hovered }
 
-        let interactive = overCat || overBar || state.isDragging
+        let interactive = overCat || overBar || overCallout || state.isDragging || state.keyboardMode
         if panel.ignoresMouseEvents == interactive { panel.ignoresMouseEvents = !interactive }
     }
 }
@@ -210,4 +241,14 @@ private extension NSRect {
 
 private extension CGPoint {
     func distance(to other: CGPoint) -> CGFloat { hypot(x - other.x, y - other.y) }
+}
+
+extension NSView {
+    func firstDescendant<T: NSView>(ofType type: T.Type) -> T? {
+        for sub in subviews {
+            if let t = sub as? T { return t }
+            if let t = sub.firstDescendant(ofType: type) { return t }
+        }
+        return nil
+    }
 }
