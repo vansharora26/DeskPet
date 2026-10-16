@@ -58,6 +58,7 @@ struct HubView: View {
     @ObservedObject var pet: PetViewModel
     @ObservedObject var settings: AppSettings
     var openSettings: (SettingsTab) -> Void
+    var enterFocusWorld: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -106,10 +107,10 @@ struct HubView: View {
 
                 Group {
                     switch state.tab {
-                    case .today: TodayView(model: model, hub: state, pet: pet)
+                    case .today: TodayView(model: model, hub: state, pet: pet, enterFocusWorld: enterFocusWorld)
                     case .chat: ChatView(chat: chat, openSettings: { openSettings(.ai) })
                     case .water: WaterView(model: model, hub: state, openSettings: { openSettings(.water) })
-                    case .focus: FocusView(model: model, openSettings: { openSettings(.focus) })
+                    case .focus: FocusView(model: model, openSettings: { openSettings(.focus) }, enterFocusWorld: enterFocusWorld)
                     case .tasks: TasksView(model: model, hub: state)
                     case .stats: StatsView(model: model, openSettings: { openSettings(.pet) })
                     }

@@ -50,6 +50,7 @@ public struct DeskPetData: Codable, Equatable, Sendable {
     /// Times the user marked a movement/stretch reminder as done.
     public var movementBreaks: [Date] = []
     public var briefing = BriefingSettings()
+    public var worlds = WorldsData()
 
     public init() {}
 }
@@ -66,6 +67,7 @@ extension DeskPetData {
         movementReminder = c.value(.movementReminder, default: ReminderState())
         movementBreaks = c.value(.movementBreaks, default: [])
         briefing = c.value(.briefing, default: BriefingSettings())
+        worlds = c.value(.worlds, default: WorldsData())
     }
 }
 

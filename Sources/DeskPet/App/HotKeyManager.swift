@@ -39,7 +39,7 @@ struct Shortcut: Codable, Equatable {
 
 /// Global actions that can have a keyboard shortcut.
 enum HotKeyAction: String, CaseIterable, Codable, Identifiable {
-    case launcher, capture, chat, pushToTalk, logWater, togglePet, keyboardMode
+    case launcher, capture, chat, pushToTalk, focusWorld, logWater, togglePet, keyboardMode
     var id: String { rawValue }
 
     var title: String {
@@ -48,6 +48,7 @@ enum HotKeyAction: String, CaseIterable, Codable, Identifiable {
         case .capture: return "Quick capture"
         case .chat: return "Talk to your pet"
         case .pushToTalk: return "Push to talk (hold)"
+        case .focusWorld: return "Enter / exit Focus World"
         case .logWater: return "Log a glass of water"
         case .togglePet: return "Show / hide pet"
         case .keyboardMode: return "Control pet with keyboard"
@@ -61,6 +62,7 @@ enum HotKeyAction: String, CaseIterable, Codable, Identifiable {
         case .capture: return Shortcut(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: mods, display: "⌃⌥N")
         case .chat: return Shortcut(keyCode: UInt32(kVK_ANSI_C), carbonModifiers: mods, display: "⌃⌥C")
         case .pushToTalk: return Shortcut(keyCode: UInt32(kVK_ANSI_V), carbonModifiers: mods, display: "⌃⌥V")
+        case .focusWorld: return Shortcut(keyCode: UInt32(kVK_ANSI_F), carbonModifiers: mods, display: "⌃⌥F")
         case .logWater: return Shortcut(keyCode: UInt32(kVK_ANSI_W), carbonModifiers: mods, display: "⌃⌥W")
         case .togglePet: return Shortcut(keyCode: UInt32(kVK_ANSI_H), carbonModifiers: mods, display: "⌃⌥H")
         case .keyboardMode: return Shortcut(keyCode: UInt32(kVK_ANSI_P), carbonModifiers: mods, display: "⌃⌥P")

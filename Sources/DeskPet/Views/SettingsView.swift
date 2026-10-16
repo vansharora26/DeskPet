@@ -3,7 +3,7 @@ import DeskPetCore
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, pet, water, focus, voice, shortcuts, ai, privacy
+    case general, pet, water, focus, worlds, voice, shortcuts, ai, privacy
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .water: return "Water"
         case .focus: return "Focus"
         case .voice: return "Voice"
+        case .worlds: return "Focus Worlds"
         case .shortcuts: return "Shortcuts"
         case .ai: return "AI"
         case .privacy: return "Privacy & Data"
@@ -24,6 +25,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .water: return "drop"
         case .focus: return "timer"
         case .voice: return "waveform"
+        case .worlds: return "mountain.2"
         case .shortcuts: return "command"
         case .ai: return "sparkles"
         case .privacy: return "lock.shield"
@@ -65,6 +67,8 @@ struct SettingsView: View {
                 .tabItem { Label(SettingsTab.water.title, systemImage: SettingsTab.water.symbol) }.tag(SettingsTab.water)
             FocusSettingsView(model: model)
                 .tabItem { Label(SettingsTab.focus.title, systemImage: SettingsTab.focus.symbol) }.tag(SettingsTab.focus)
+            WorldsSettingsView(model: model)
+                .tabItem { Label(SettingsTab.worlds.title, systemImage: SettingsTab.worlds.symbol) }.tag(SettingsTab.worlds)
             VoiceSettings(settings: settings, voice: voice, recognizer: voice.input)
                 .tabItem { Label(SettingsTab.voice.title, systemImage: SettingsTab.voice.symbol) }.tag(SettingsTab.voice)
             ShortcutSettings(hotkeys: hotkeys)
@@ -74,7 +78,7 @@ struct SettingsView: View {
             PrivacySettings(model: model, actions: actions)
                 .tabItem { Label(SettingsTab.privacy.title, systemImage: SettingsTab.privacy.symbol) }.tag(SettingsTab.privacy)
         }
-        .frame(width: 560, height: 580)
+        .frame(width: 620, height: 600)
         .dpPanelStyle()
     }
 }
@@ -407,6 +411,80 @@ private struct FocusSettingsView: View {
                 Stepper("Every \(s.movementIntervalMinutes) minutes", value: bind(\.movementIntervalMinutes),
                         in: FocusSettings.movementRange, step: 15).disabled(!s.movementRemindersEnabled)
                 Hint(text: "Follows your quiet hours from the Water tab.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Focus Worlds
+
+private struct WorldsSettingsView: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let s = model.data.worlds.settings
+        func bind<T>(_ kp: WritableKeyPath<WorldsSettings, T>) -> Binding<T> {
+            Binding(get: { model.data.worlds.settings[keyPath: kp] }, set: { v in model.updateWorlds { $0.settings[keyPath: kp] = v } })
+        }
+        return Form {
+            Section("Opening Focus Worlds") {
+                Picker("Open to", selection: Binding(
+                    get: { s.openToLobby ? nil : s.defaultWorld },
+                    set: { v in model.updateWorlds { if let v { $0.settings.openToLobby = false; $0.settings.defaultWorld = v } else { $0.settings.openToLobby = true } } })) {
+                    Text("All worlds").tag(FocusWorld?.none)
+                    ForEach(FocusWorld.allCases) { Text($0.title).tag(FocusWorld?.some($0)) }
+                }
+                Hint(text: "A running session always reopens in its own world. Shortcut: ⌃⌥F (Shortcuts tab).")
+            }
+            Section("Session length") {
+                ForEach(FocusWorld.allCases.filter { $0.timerPhase != nil }) { w in
+                    Stepper("\(w.title): \(s.minutes(for: w)) min", value: Binding(
+                        get: { s.minutes(for: w) }, set: { v in model.updateWorlds { $0.settings.setMinutes(v, for: w) } }),
+                            in: w.minuteRange, step: w == .recharge ? 1 : 5)
+                }
+            }
+            Section("Ambient sound") {
+                Toggle("Play ambient sound in Deep Focus, Study and Recharge", isOn: bind(\.ambientEnabled))
+                ForEach(FocusWorld.allCases.filter(\.supportsAmbience)) { w in
+                    Picker(w.title, selection: Binding(
+                        get: { s.sound(for: w) ?? w.ambientSounds[0] },
+                        set: { v in model.updateWorlds { $0.settings.ambientSound[w.rawValue] = v } })) {
+                        ForEach(w.ambientSounds) { Text($0.title).tag($0) }
+                    }
+                    .disabled(!s.ambientEnabled)
+                }
+                HStack {
+                    Text("Volume")
+                    Slider(value: bind(\.volume), in: 0...1).accessibilityLabel("Ambient volume")
+                }
+                .disabled(!s.ambientEnabled)
+                Hint(text: "Sounds are generated on your Mac — no recordings or downloads. Off by default; fades out when you leave a world.")
+            }
+            Section("Look & motion") {
+                Picker("Motion", selection: bind(\.motion)) {
+                    ForEach(MotionLevel.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Background", selection: bind(\.scenery)) {
+                    ForEach(SceneryStyle.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Show your pet inside worlds", isOn: bind(\.showPet))
+                Toggle("Hide the desktop pet while a world is open", isOn: bind(\.hideDesktopPet))
+                Toggle("Breathing guide in Recharge", isOn: bind(\.breathingGuide))
+                Hint(text: "“Still” stops all scene and pet animation. Animations also pause when the window is hidden, and follow DeskPet’s Animations setting and macOS Reduce Motion.")
+            }
+            Section("When a session ends") {
+                Picker("Then", selection: bind(\.sessionEnd)) {
+                    ForEach(SessionEndBehavior.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Notify me (macOS notification, if enabled in General)", isOn: Binding(
+                    get: { model.focusSettings.notifyWhenPhaseEnds },
+                    set: { v in model.updateFocusSettings { $0.notifyWhenPhaseEnds = v } }))
+                Toggle("Hold water & movement reminders during sessions", isOn: Binding(
+                    get: { model.focusSettings.muteNonessentialDuringFocus },
+                    set: { v in model.updateFocusSettings { $0.muteNonessentialDuringFocus = v } }))
+                Hint(text: "Task reminders you set yourself always come through.")
             }
         }
         .formStyle(.grouped)

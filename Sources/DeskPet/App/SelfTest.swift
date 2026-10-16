@@ -105,6 +105,7 @@ enum SelfTest {
             let pet = PetViewModel(store: PetStore(directory: petDir), settings: settings, sound: SoundPlayer())
             let chat = ChatModel(model: model, settings: settings, pet: pet,
                                  store: JSONDocumentStore(fileURL: dir.appendingPathComponent("chat.json")))
+            chat.forceLocalOnly = true   // never touch the network or the user's API key
             var spoken: [String] = []
             chat.onReply = { text, _ in spoken.append(text) }
             let before = model.todayWaterML
@@ -177,6 +178,8 @@ enum SelfTest {
             }
             pet.eraseAndStopSaving()
         }
+
+        checkFocusWorlds(dir: dir)
 
         // Text editing: ⌘V reaches text fields (incl. the secure API-key field) via the main menu.
         checkPaste()
@@ -290,5 +293,96 @@ enum SelfTest {
         let viaPanel = MainMenu.handleEditShortcut(event, in: window)
         check("edit: panel fallback also pastes", viaPanel && field.stringValue == "sk-ant-selftest-0000")
         window.orderOut(nil)
+    }
+
+    /// Focus Worlds: one shared timer, honest records, no duplicates, restart-safe, opt-in audio.
+    private static func checkFocusWorlds(dir: URL) {
+        let url = dir.appendingPathComponent("worlds.json")
+        let model = AppModel(store: JSONDocumentStore(fileURL: url))
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "DeskPetWorldsTest-\(UUID().uuidString)")!)
+        let pet = PetViewModel(store: PetStore(directory: dir.appendingPathComponent("wpet")), settings: settings, sound: SoundPlayer())
+        defer { pet.eraseAndStopSaving() }
+        let worlds = WorldsController(model: model, pet: pet, appSettings: settings)
+        try? model.stopFocus()
+
+        let err = worlds.start(.deepFocus, minutes: 50, label: "Write chapter 3")
+        check("worlds: Deep Focus starts the shared timer", err == nil && model.focusTimerState?.world == "deepFocus"
+              && model.focusTimerState?.label == "Write chapter 3", err ?? "")
+        check("worlds: session state is running", worlds.sessionState(for: .deepFocus) == .running)
+        worlds.pause()
+        check("worlds: pause", worlds.sessionState(for: .deepFocus) == .paused)
+        worlds.resume()
+        let endsAt = model.focusTimerState?.endsAt
+        worlds.enter(.study)
+        check("worlds: switching worlds keeps the same session (no reset)",
+              model.focusTimerState?.endsAt == endsAt && model.focusTimerState?.world == "study")
+        worlds.enter(.planning)
+        check("worlds: planning doesn't touch the running session", model.focusTimerState?.endsAt == endsAt)
+        let second = worlds.start(.workSprint, minutes: 25, label: "x")
+        check("worlds: no competing second timer", second != nil && model.focusTimerState?.endsAt == endsAt, second ?? "")
+
+        let before = model.data.focus.records.count
+        worlds.endEarly()
+        let early = model.data.focus.records.last
+        check("worlds: ending early is recorded as not completed",
+              model.data.focus.records.count == before + 1 && early?.completed == false && early?.world == "study")
+        check("worlds: summary screen follows", worlds.screen == .summary(early!.id) && model.data.worlds.pendingSummary == early?.id)
+        worlds.finishSummary(early!.id, reflection: "Outlined two sections")
+        check("worlds: reflection saved, summary cleared",
+              model.record(early!.id)?.reflection == "Outlined two sections" && model.data.worlds.pendingSummary == nil)
+
+        // Natural completion: exactly one record, even if the timer fires twice.
+        _ = worlds.start(.deepFocus, minutes: 30, label: nil)
+        model.mutate { $0.focus.timer?.endsAt = Date().addingTimeInterval(-1) }
+        let count = model.data.focus.records.count
+        model.advanceFocus()
+        model.advanceFocus()
+        let done = model.data.focus.records.last
+        check("worlds: completed session recorded exactly once", model.data.focus.records.count == count + 1
+              && done?.completed == true && done?.world == "deepFocus" && model.focusTimerState == nil)
+        check("worlds: completion doesn't auto-start a break", model.focusTimerState == nil)
+
+        // Restart: a running world session survives a relaunch.
+        _ = worlds.start(.workSprint, minutes: 45, label: "Ship v2.2")
+        model.saveNow()
+        let relaunched = AppModel(store: JSONDocumentStore(fileURL: url))
+        let drift = abs((relaunched.focusTimerState?.endsAt ?? .distantPast).timeIntervalSince(model.focusTimerState?.endsAt ?? .distantFuture))
+        check("worlds: session survives restart", relaunched.focusTimerState?.world == "workSprint" && drift < 1,
+              String(format: "end-time drift %.3fs", drift))
+        worlds.discard()
+        check("worlds: discard leaves no record", model.focusTimerState == nil && model.data.focus.records.count == count + 1)
+
+        // Every world can be entered; breaks stay in their world; Recharge remembers where you came from.
+        for w in FocusWorld.allCases { worlds.enter(w) }
+        check("worlds: every world can be entered", worlds.currentWorld == .planning)
+        try? model.stopFocus()
+        worlds.enter(.study)
+        let breakErr = worlds.startBreak(in: .study, minutes: 5)
+        check("worlds: a Study break belongs to Study", breakErr == nil && model.focusTimerState?.world == "study"
+              && model.focusTimerState?.phase.isBreak == true && worlds.sessionState(for: .study) == .running
+              && worlds.sessionState(for: .recharge) == .idle)
+        worlds.discard()
+        worlds.enter(.deepFocus)
+        worlds.enter(.recharge)
+        check("worlds: Recharge remembers the world to return to", worlds.returnWorld == .deepFocus)
+        _ = worlds.start(.recharge, minutes: 5, label: nil)
+        check("worlds: Recharge runs a real break on the shared timer",
+              model.focusTimerState?.phase == .shortBreak && model.focusTimerState?.world == "recharge")
+        worlds.discard()
+        worlds.showSelection()
+        check("worlds: back to the world picker", worlds.screen == .selection)
+
+        // Audio: opt-in, never plays while the world is closed; sounds are real.
+        model.updateWorlds { $0.settings.ambientEnabled = true }
+        worlds.updateAudio()
+        check("audio: nothing plays while Focus Worlds is closed", !worlds.audio.isPlaying)
+        for sound in AmbientSound.allCases {
+            if let r = try? AmbientAudioEngine.renderOffline(sound, seconds: 1.5) {
+                check("audio: \(sound.title) is real, unclipped audio", r.rms > 0.003 && r.peak <= 1.0,
+                      String(format: "rms %.3f peak %.2f", r.rms, r.peak))
+            } else {
+                check("audio: \(sound.title) renders", false)
+            }
+        }
     }
 }

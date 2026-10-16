@@ -101,7 +101,11 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// Forces on-device-only behaviour (used by the self-test so it never calls the network or uses the user's key).
+    var forceLocalOnly = false
+
     var aiState: AIState {
+        if forceLocalOnly { return .notConfigured }
         if proxyURL != nil { return .proxy(model: settings.aiModel) }
         return KeychainStore.hasAPIKey ? .direct(model: settings.aiModel) : .notConfigured
     }

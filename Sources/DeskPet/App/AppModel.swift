@@ -180,8 +180,10 @@ final class AppModel: ObservableObject {
     var focusSettings: FocusSettings { data.focus.settings }
     var focusTimerState: FocusTimer? { data.focus.timer }
 
-    func startFocus(_ phase: FocusPhase = .focus, minutes: Int? = nil, label: String? = nil, replacing: Bool = false) throws {
-        try mutate { try $0.focus.start(phase, minutes: minutes, label: label, now: Date(), replacing: replacing) }
+    func startFocus(_ phase: FocusPhase = .focus, minutes: Int? = nil, label: String? = nil, replacing: Bool = false,
+                    world: FocusWorld? = nil) throws {
+        try mutate { try $0.focus.start(phase, minutes: minutes, label: label, now: Date(), replacing: replacing,
+                                        world: world?.rawValue) }
         let m = minutes ?? data.focus.settings.minutes(for: phase)
         events.send(.focusStarted(phase, minutes: m))
         scheduleFocusTimer()
@@ -211,6 +213,22 @@ final class AppModel: ObservableObject {
         mutate { $0.focus.reset() }
         events.send(.focusStopped)
         scheduleFocusTimer()
+    }
+
+    /// Moves a running session into a world (e.g. switching Deep Focus → Study) without restarting it.
+    func adoptTimer(into world: FocusWorld) {
+        guard data.focus.timer != nil, data.focus.timer?.world != world.rawValue else { return }
+        mutate { $0.focus.timer?.world = world.rawValue }
+    }
+
+    func setReflection(_ text: String?, for recordID: UUID) {
+        mutate { _ = $0.focus.setReflection(text, for: recordID) }
+    }
+
+    func record(_ id: UUID) -> FocusRecord? { data.focus.records.last { $0.id == id } }
+
+    func updateWorlds(_ change: (inout WorldsData) -> Void) {
+        mutate { change(&$0.worlds) }
     }
 
     func updateFocusSettings(_ change: (inout FocusSettings) -> Void) {

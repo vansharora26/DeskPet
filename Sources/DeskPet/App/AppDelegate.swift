@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pet: PetViewModel!
     private var chat: ChatModel!
     private var voice: VoiceController!
+    private var worlds: WorldsController!
     private var router: WindowRouter!
     private var behavior: PetBehavior!
     private var scheduler: ReminderScheduler!
@@ -40,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                          store: JSONDocumentStore(fileURL: dataDirectory.appendingPathComponent("chat.json")))
 
         voice = VoiceController(chat: chat, settings: settings, pet: pet)
+        worlds = WorldsController(model: model, pet: pet, appSettings: settings)
 
         // Windows & behaviour
         router = WindowRouter(model: model, chat: chat, pet: pet, settings: settings)
@@ -57,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuActions = makeMenuActions()
         buildPetWindow()
+        worlds.setDesktopPetHidden = { [weak self] hidden in
+            guard let self else { return }
+            if hidden { self.petWindow.hide() } else if self.settings.petVisible { self.petWindow.show() }
+        }
+        router.openFocusWorld = { [weak self] in self?.worlds.open() }
+        offerToResumeWorldSession()
         statusBar = StatusBarController(pet: pet, model: model, actions: menuActions)
 
         // Notifications (optional) & reminders
@@ -96,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        worlds?.audio.stop(fade: 0)
         voice?.cancelListening()
         voice?.stopSpeaking()
         model?.shutdown()
@@ -127,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openFocus: { [weak self] in self?.router.open(.focus) },
             openChat: { [weak self] in self?.router.showConversation() },
             openCapture: { [weak self] in self?.router.open(.capture) },
+            enterWorld: { [weak self] in self?.worlds.open() },
             moreMenu: { [weak self] in
                 guard let self else { return nil }
                 return PetMenu.make(pet: self.pet, model: self.model, actions: self.menuActions)
@@ -158,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPetVisible: { [weak self] in self?.petWindow.isVisible ?? false },
             open: { [weak self] d in self?.router.open(d) },
             talk: { [weak self] in self?.router.showConversation() },
+            enterWorld: { [weak self] in self?.worlds.open() },
             openSettings: { [weak self] t in self?.router.openSettings(t) },
             openWelcome: { [weak self] in self?.showWelcome(isUpgrade: false) },
             resetPosition: { [weak self] in
@@ -180,6 +191,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if alert.runModal() == .alertFirstButtonReturn { run(.stopFocus) }
     }
 
+    /// After a restart, a world session that's still running is one click away.
+    private func offerToResumeWorldSession() {
+        guard let t = model.focusTimerState, let w = t.world.flatMap(FocusWorld.init(rawValue:)) else { return }
+        pet.show(PetCallout(kind: .focusPhase, symbol: WorldTheme.of(w).symbol,
+                            message: "Your \(w.title) session is still \(t.isRunning ? "running" : "paused").",
+                            actions: [.init(title: "Return to it", isPrimary: true) { [weak self] in
+                                self?.pet.clearCallout(kind: .focusPhase)
+                                self?.worlds.open(w)
+                            }]))
+    }
+
     // MARK: - Keyboard
 
     private func handleHotKey(_ action: HotKeyAction) {
@@ -187,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .launcher: router.showLauncher()
         case .capture: router.showCapture()
         case .chat: router.showConversation()
+        case .focusWorld: worlds.isOpen ? worlds.close() : worlds.open()
         case .pushToTalk:
             router.showConversation()
             voice.pressBegan()

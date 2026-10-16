@@ -26,6 +26,7 @@ enum PetMenu {
         var isPetVisible: () -> Bool
         var open: (Destination) -> Void
         var talk: () -> Void
+        var enterWorld: () -> Void
         var openSettings: (SettingsTab) -> Void
         var openWelcome: () -> Void
         var resetPosition: () -> Void
@@ -90,6 +91,7 @@ enum PetMenu {
         }
         menu.addItem(.separator())
 
+        menu.addItem(ActionMenuItem("Enter Focus World…", symbol: "mountain.2.fill") { a.enterWorld() })
         menu.addItem(ActionMenuItem("Talk to \(pet.name)…", symbol: "waveform") { a.talk() })
         menu.addItem(ActionMenuItem("Chat…", symbol: "bubble.left.and.text.bubble.right") { a.open(.chat) })
         menu.addItem(ActionMenuItem("Quick Capture…", symbol: "square.and.pencil") { a.open(.capture) })

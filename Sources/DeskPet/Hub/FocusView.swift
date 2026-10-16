@@ -7,6 +7,7 @@ import SwiftUI
 struct FocusView: View {
     @ObservedObject var model: AppModel
     var openSettings: () -> Void
+    var enterFocusWorld: () -> Void = {}
     @State private var minutes: Int = 25
     @State private var label = ""
     @State private var confirmReset = false
@@ -28,6 +29,11 @@ struct FocusView: View {
                     }
                     if let error { Text(error).font(DP.caption).foregroundStyle(DP.danger) }
                 }
+
+                Button(action: enterFocusWorld) {
+                    Label("Enter Focus World", systemImage: "mountain.2.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillButtonStyle())
 
                 Card {
                     SectionTitle(text: "Today", symbol: "chart.bar.fill")

@@ -8,7 +8,7 @@ struct PetLayout: Equatable {
     static let bubbleHeight: CGFloat = 96   // room for a 2-line callout with buttons
     static let gap: CGFloat = 4
     static let barHeight: CGFloat = 34
-    static let barWidth: CGFloat = 188
+    static let barWidth: CGFloat = 222
 
     /// Headroom above the cat so the biggest hop (5 sprite px) never reaches the bubble.
     var hopRoom: CGFloat { (pixel * 5 + 4).rounded() }

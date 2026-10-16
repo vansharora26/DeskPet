@@ -10,7 +10,7 @@ public enum StatsPeriod: String, Codable, Sendable {
 }
 
 public enum Destination: String, Codable, Sendable, CaseIterable {
-    case today, chat, capture, water, focus, tasks, notes, stats, settings, launcher
+    case today, chat, capture, water, focus, tasks, notes, stats, settings, launcher, focusWorld
 }
 
 /// Every action DeskPet can perform, from the launcher, chat, AI tools, or UI.
@@ -77,7 +77,7 @@ public enum AppCommand: Equatable, Sendable {
             if enabled == false { return "Turn off \(kind.title.lowercased())" }
             if let interval { return "\(kind.title) every \(interval) minutes" }
             return "Turn on \(kind.title.lowercased())"
-        case .open(let d): return "Open \(d.rawValue.capitalized)"
+        case .open(let d): return d == .focusWorld ? "Enter Focus Worlds" : "Open \(d.rawValue.capitalized)"
         case .waterTotal: return "Show today’s water total"
         case .timerStatus: return "Show time left on the timer"
         }
@@ -313,10 +313,11 @@ public enum CommandParser {
             ("quick capture|capture|new note", .capture, false), ("notes", .notes, false),
             ("tasks|to-?dos|to-?do list", .tasks, false), ("stats|insights|statistics", .stats, false),
             ("today|briefing|daily briefing|dashboard|home", .today, false), ("launcher|command palette", .launcher, false),
+            ("focus worlds?|immersive mode", .focusWorld, false),
             ("water|hydration|water tracker", .water, true), ("focus|timer|pomodoro|focus timer", .focus, true),
         ]
         for (words, dest, needsVerb) in map {
-            let verb = needsVerb ? "(?:open|show|go to|view)\\s+" : "(?:(?:open|show|go to|view)\\s+)?"
+            let verb = needsVerb ? "(?:open|show|go to|view|enter)\\s+" : "(?:(?:open|show|go to|view|enter)\\s+)?"
             if Rx.first("^\(verb)(?:the\\s+|my\\s+)?(?:\(words))(?:\\s+(?:view|tab|panel|window))?$", in: lower) != nil {
                 return .open(dest)
             }

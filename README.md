@@ -1,4 +1,4 @@
-# DeskPet 2.1
+# DeskPet 2.2
 
 A pixel-art cat that lives on your Mac desktop — and helps you drink water,
 focus, remember things, and get stuff done. Native Swift + SwiftUI + AppKit,
@@ -16,8 +16,10 @@ open build/DeskPet.app
 Checks:
 
 ```sh
-scripts/test.sh                          # 85 unit tests (core logic, conversation, speech text, API client — offline)
-.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, actions, voice, TTS) in a temp folder
+scripts/test.sh                          # 95 unit tests (core logic, Focus Worlds, conversation, speech text, API client — offline)
+.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, voice, Focus Worlds, audio) in a temp folder
+.build/release/DeskPet --export-worlds ./shots          # renders every Focus Worlds screen to PNG (offscreen)
+.build/release/DeskPet --worlds-probe deepFocus 15      # runs a live world off-screen so you can measure CPU
 .build/release/DeskPet --export-previews ./previews   # renders every pet state to PNG
 ```
 
@@ -32,6 +34,7 @@ scripts/test.sh                          # 85 unit tests (core logic, conversati
 | **Capture, tasks & notes** | ⌃⌥N capture (Return saves; ⌘T makes it a task; “tomorrow 5pm” becomes the deadline). Inbox / Today / Upcoming / Completed, search, edit, pin, deadlines, reminders, soft delete with undo + Recently Deleted. |
 | **Launcher** | ⌃⌥Space. Natural language (“water 250 ml”, “focus for 30 minutes”, “remind me to call Sam at 7 pm”), live suggestions, shows exactly what will run, confirms risky actions, Undo. |
 | **Chat** | Real Claude assistant with typed tools (log water, timers, tasks, notes, reminders, stats). Local commands work without AI. |
+| **Focus Worlds** | Immersive full-window environments: Deep Focus, Study, Work Sprint, Recharge, Daily Planning — each with its own scene, layout, type, pet behaviour and controls (⌃⌥F, the pet’s mountain button, menus, or Today). |
 | **Voice conversation** | “Talk to <pet>” window (pet’s Chat button, ⌃⌥C, or menu). Push-to-talk (hold the mic or ⌃⌥V; tap to latch), spoken replies with native macOS voices, listening / thinking / speaking animations, mute, interruption, short-term context. |
 | **Today** | Daily briefing (tasks, deadlines, water, focus, one suggested next step) and an end-of-day wrap-up. |
 | **Stats** | 7-day charts, breaks, task completion, and rule-based insights that say how they were computed. |
@@ -45,6 +48,7 @@ scripts/test.sh                          # 85 unit tests (core logic, conversati
 | ⌃⌥N | Quick capture |
 | ⌃⌥C | Talk to your pet (conversation window) |
 | ⌃⌥V (hold) | Push to talk from anywhere |
+| ⌃⌥F | Enter / exit Focus Worlds |
 | ⌃⌥W | Log a glass of water |
 | ⌃⌥H | Show / hide pet |
 | ⌃⌥P | Keyboard mode (arrows move the pet, Space pets, W water, F focus, Esc exits) |
@@ -52,6 +56,64 @@ scripts/test.sh                          # 85 unit tests (core logic, conversati
 Shortcuts use Carbon `RegisterEventHotKey`: only these combinations are
 delivered to DeskPet. There's no keyboard monitoring and no Accessibility
 permission.
+
+## Focus Worlds
+
+Enter from the pet’s **mountain** button, the pet or menu-bar menu, the
+**Enter Focus World** banner on the Today page, the Focus tab, the launcher
+(“enter focus world”), or **⌃⌥F**. Focus Worlds opens a dedicated window sized
+to your screen’s visible area; use the ⤢ button (or ⌃⌘F) for native full
+screen. It changes only DeskPet’s own window — never your desktop or wallpaper.
+
+| World | Composition | What you do there |
+| --- | --- | --- |
+| **Deep Focus** | Night forest with a lit cabin, ultra-light timer, top bar that fades while you work | One intention (or pick a task), big timer, pause/resume/end, capture thoughts (⌘N), optional rain/forest/room sound |
+| **Study** | Warm study room; timer on the desk, a cream “notebook” panel | Study sprints and breaks, a checklist (can link real tasks), session notes (save to Notes), today’s sprint history |
+| **Work Sprint** | Crisp light grid, bold type, energetic pet in a headband | “What are you trying to finish?”, duration or finish-by time, milestones with progress, time spent, “I finished it!” |
+| **Recharge** | Sunrise garden, relaxed pet | Short break countdown, optional breathing guide, rotating stretch/eye-rest suggestions, back to your previous world. No streaks or scores. |
+| **Daily Planning** | Bright morning desk | Up to three outcomes (from your tasks, or new ones saved as tasks due today), available time → estimated sessions, notes, start a sprint on any priority, end-of-day review. No calendar access. |
+
+**One timer.** Every world uses DeskPet’s existing focus timer (absolute end
+times, restart-safe). Switching worlds never restarts a session; a second
+competing timer can’t be started; a session runs on after you exit, and the
+pet offers to take you back after a relaunch. World sessions are recorded in
+the normal focus history with their world, label and optional reflection.
+Finishing is recorded as *completed*; ending early as *ended early* (no
+shaming); “Discard” records nothing. Each session is recorded exactly once.
+
+**End of session.** A summary shows time completed, the intention, status,
+an optional “What did you accomplish?”, a checkbox to complete the linked
+task, and Start another / Take a break / Return to DeskPet (configurable).
+
+**Reminders & notifications.** Water/movement reminders are held during
+sessions if you choose (existing setting); reminders that do appear show
+inside the world while the desktop pet is hidden. The optional end-of-session
+macOS notification is scheduled once per session end, so it can’t duplicate.
+
+**Ambient sound** (Deep Focus, Study, Recharge) is **off by default**. Rain,
+forest breeze, soft room noise and fireplace are **synthesized live on your
+Mac** — no recordings, downloads or licensing. One audio engine plays one
+sound at a time (switching crossfades; nothing overlaps) and it fades out when
+you leave the world or the summary appears.
+
+**Performance & motion.** Scenes are drawn once; only small details (fireflies,
+steam, petals, a light sweep) animate at 5–15 fps via a low-rate clock that
+runs only while visible. Measured: about 2–5% CPU with a 1440×900 world
+animating on “Subtle”, ~0% on “Still”. Motion follows Settings › Focus Worlds,
+DeskPet’s Animations switch and macOS Reduce Motion.
+
+**Settings › Focus Worlds:** open to the picker or a default world, per-world
+durations, ambient sound (on/off, sound per world, volume), motion (Lively /
+Subtle / Still), background (illustrated / minimal), pet in worlds, hide the
+desktop pet, breathing guide, session-end behaviour, notification and
+reminder holding. Shortcut in Settings › Shortcuts.
+
+In-world keys: ⌘1–⌘5 switch worlds, ⌘0 world picker, ⌘⏎ start, ⌘P
+pause/resume, ⌘N capture a thought, ⌘W exit.
+
+**Adding worlds later.** A world is a `FocusWorld` case (title, timer phase,
+durations, sounds) + a `WorldTheme` + a scene + one view; sessions, summary,
+audio, pet behaviour and settings are shared. Nothing is paywalled.
 
 ## Voice conversation
 
@@ -156,6 +218,7 @@ Sources/DeskPetCore/      Pure, unit-tested logic (no UI)
   Hydration · Reminders (single next-due planner) · Focus (absolute-time timer)
   Items (notes/tasks) · NaturalDate + Commands (NL → typed AppCommand)
   ConversationContext (short-term follow-ups) · SpokenText (text → speech-friendly)
+  FocusWorlds (worlds, settings, sprint/study/day plans)
   Progression · Insights & Briefing · DeskPetData (versioned, tolerant JSON)
   DataExport (JSON/CSV) · JSONValue + ClaudeClient (Messages API, retries)
   PetStats/PetEngine/PetStore (pet needs, from 1.0)
@@ -165,6 +228,8 @@ Sources/DeskPet/
               NotificationManager, HotKeyManager, PetMenu, StatusBarController, SelfTest
   AI/         ChatModel (local-first routing, context follow-ups, undo, tool loop, permissions), AssistantTools, Keychain
   Voice/      SpeechRecognizerService (push-to-talk, on-device), SpeechSynthesizerService, VoiceController
+  Worlds/     WorldsController (window + navigation over the shared timer), WorldTheme, WorldScenery,
+              WorldPet, AmbientAudioEngine (synthesized), FrameClock, lobby + five world views, summary
   Pet/        PetViewModel, PetBehavior (events → expressions), PetCallout, Speech, Sound
   Rendering/  Pixel sprites → cached bitmaps, PetAnimator, PetAnimationDriver
   Window/     Pet panel (click-through, keyboard mode), layout, WindowRouter

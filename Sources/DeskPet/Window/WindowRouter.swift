@@ -64,6 +64,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     var petFrame: () -> NSRect? = { nil }
     var makeSettingsView: () -> AnyView = { AnyView(EmptyView()) }
     var onKeyboardMode: () -> Void = {}
+    var openFocusWorld: () -> Void = {}
 
     init(model: AppModel, chat: ChatModel, pet: PetViewModel, settings: AppSettings) {
         self.model = model
@@ -76,6 +77,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     func open(_ destination: Destination) {
         switch destination {
         case .capture: showCapture()
+        case .focusWorld: openFocusWorld()
         case .launcher: showLauncher()
         case .settings: openSettings(.general)
         case .today: showHub(.today)
@@ -98,7 +100,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         hubState.tab = tab
         if hubWindow == nil {
             let view = HubView(state: hubState, model: model, chat: chat, pet: pet, settings: settings,
-                               openSettings: { [weak self] t in self?.openSettings(t) })
+                               openSettings: { [weak self] t in self?.openSettings(t) },
+                               enterFocusWorld: { [weak self] in self?.openFocusWorld() })
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)

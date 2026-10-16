@@ -9,6 +9,7 @@ struct PetBarActions {
     var openFocus: () -> Void
     var openChat: () -> Void
     var openCapture: () -> Void
+    var enterWorld: () -> Void
     var moreMenu: () -> NSMenu?
 }
 
@@ -406,6 +407,7 @@ private struct ActionBar: View {
                          action: actions.toggleFocus)
             ActionButton(symbol: "bubble.left.and.text.bubble.right.fill", label: "Chat", action: actions.openChat)
             ActionButton(symbol: "square.and.pencil", label: "Quick capture", action: actions.openCapture)
+            ActionButton(symbol: "mountain.2.fill", label: "Enter Focus World", action: actions.enterWorld)
             MoreButton(menu: actions.moreMenu)
         }
         .padding(.horizontal, 6)

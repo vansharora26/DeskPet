@@ -86,6 +86,8 @@ public struct FocusTimer: Codable, Equatable, Sendable {
     /// Set while paused.
     public var pausedRemaining: TimeInterval?
     public var label: String?
+    /// Which Focus World started this session (nil = classic timer).
+    public var world: String?
 
     public var isRunning: Bool { endsAt != nil }
     public var isPaused: Bool { endsAt == nil }
@@ -115,9 +117,14 @@ public struct FocusRecord: Codable, Identifiable, Equatable, Sendable {
     /// False when skipped or stopped early.
     public var completed: Bool
     public var label: String?
+    /// Focus World the session ran in, if any.
+    public var world: String?
+    /// Optional "What did you accomplish?" answer.
+    public var reflection: String?
 
     public init(id: UUID = UUID(), phase: FocusPhase, start: Date, end: Date, plannedSeconds: TimeInterval,
-                activeSeconds: TimeInterval, completed: Bool, label: String? = nil) {
+                activeSeconds: TimeInterval, completed: Bool, label: String? = nil, world: String? = nil,
+                reflection: String? = nil) {
         self.id = id
         self.phase = phase
         self.start = start
@@ -126,6 +133,8 @@ public struct FocusRecord: Codable, Identifiable, Equatable, Sendable {
         self.activeSeconds = activeSeconds
         self.completed = completed
         self.label = label
+        self.world = world
+        self.reflection = reflection
     }
 }
 
@@ -160,7 +169,7 @@ public struct FocusData: Codable, Equatable, Sendable {
     // MARK: Commands
 
     public mutating func start(_ phase: FocusPhase, minutes: Int? = nil, label: String? = nil,
-                               now: Date, replacing: Bool = false) throws {
+                               now: Date, replacing: Bool = false, world: String? = nil) throws {
         if timer != nil && !replacing { throw FocusError.timerAlreadyActive }
         let m = minutes ?? settings.minutes(for: phase)
         let range = phase == .focus ? FocusSettings.focusRange : FocusSettings.breakRange
@@ -169,7 +178,7 @@ public struct FocusData: Codable, Equatable, Sendable {
         let seconds = TimeInterval(m) * 60
         timer = FocusTimer(phase: phase, plannedSeconds: seconds, startedAt: now,
                            endsAt: now.addingTimeInterval(seconds), pausedRemaining: nil,
-                           label: label?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
+                           label: label?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty, world: world)
     }
 
     @discardableResult
@@ -227,13 +236,23 @@ public struct FocusData: Codable, Equatable, Sendable {
         }
 
         let onTime = now.timeIntervalSince(endsAt) < 60
-        let auto = next.map { $0.isBreak ? settings.autoStartBreaks : settings.autoStartFocus } ?? false
+        // Focus World sessions never auto-start the next phase; the world decides what happens next.
+        let auto = t.world == nil && (next.map { $0.isBreak ? settings.autoStartBreaks : settings.autoStartFocus } ?? false)
         if let phase = next, auto, onTime {
             // Starts exactly at the previous end so no time is lost or invented.
             try? start(phase, now: endsAt)
             return [.completed(r, next: phase)]
         }
         return [.completed(r, next: nil)]
+    }
+
+    /// Attaches an optional reflection to a recorded session. Returns false if not found.
+    @discardableResult
+    public mutating func setReflection(_ text: String?, for recordID: UUID) -> Bool {
+        guard let i = records.firstIndex(where: { $0.id == recordID }) else { return false }
+        let clean = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        records[i].reflection = (clean?.isEmpty ?? true) ? nil : String(clean!.prefix(2000))
+        return true
     }
 
     /// Which phase the "start" button should suggest when idle.
@@ -246,7 +265,7 @@ public struct FocusData: Codable, Equatable, Sendable {
     private func record(for t: FocusTimer, end: Date, completed: Bool) -> FocusRecord {
         FocusRecord(phase: t.phase, start: t.startedAt, end: end, plannedSeconds: t.plannedSeconds,
                     activeSeconds: completed ? t.plannedSeconds : t.activeSeconds(at: end),
-                    completed: completed, label: t.label)
+                    completed: completed, label: t.label, world: t.world)
     }
 }
 

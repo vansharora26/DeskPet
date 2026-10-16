@@ -7,6 +7,7 @@ struct TodayView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: HubState
     @ObservedObject var pet: PetViewModel
+    var enterFocusWorld: () -> Void = {}
 
     var body: some View {
         let cal = model.calendar
@@ -17,6 +18,26 @@ struct TodayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DP.spacing) {
                 Text(greeting).font(DP.body).foregroundStyle(.secondary)
+
+                // Prominent entry into Focus Worlds.
+                Button(action: enterFocusWorld) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "mountain.2.fill").font(.system(size: 22))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Enter Focus World").font(.system(size: 16, weight: .bold, design: .rounded))
+                            Text("Deep Focus · Study · Work Sprint · Recharge · Planning").font(DP.caption).opacity(0.85)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle.fill").font(.title2)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: DP.radius, style: .continuous)
+                        .fill(LinearGradient(colors: WorldTheme.lobby.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open Focus Worlds (⌃⌥F)")
 
                 // Suggested next action
                 Card {
