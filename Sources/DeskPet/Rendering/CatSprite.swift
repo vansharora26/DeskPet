@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Everything needed to draw one frame of the cat.
 struct CatPose: Hashable {
-    enum Eyes: Hashable { case open, blink, happy, sleepy, closed }
+    enum Eyes: Hashable { case open, blink, happy, sleepy, closed, lookUp }
     var eyes: Eyes = .open
     var mouthOpen = false
     var blush = false
@@ -134,6 +134,8 @@ enum CatSprite {
         case .happy:  return [(-1, 1, "K"), (0, 0, "K"), (1, 0, "K"), (2, 1, "K")]
         case .sleepy: return [(0, 0, "D"), (1, 0, "D"), (0, 1, "E"), (1, 1, "E")]
         case .closed: return [(-1, 0, "K"), (0, 1, "K"), (1, 1, "K"), (2, 0, "K")]
+        // Pupils raised with the highlight on top — "hmm, let me think".
+        case .lookUp: return [(0, -1, "E"), (1, -1, "E"), (0, 0, "E"), (1, 0, "W"), (0, 1, "O"), (1, 1, "O")]
         }
     }
 

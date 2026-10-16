@@ -9,7 +9,7 @@ set -euo pipefail
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/DeskPet.app"
-VERSION="1.0.0"
+VERSION="2.1.0"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 cd "$ROOT"
@@ -47,6 +47,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key>                  <true/>
     <key>NSHighResolutionCapable</key>      <true/>
     <key>NSHumanReadableCopyright</key>     <string>DeskPet</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>DeskPet listens only while you hold the talk button or push-to-talk shortcut, so your pet can understand what you say.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>DeskPet turns what you say into text so your pet can respond. When your Mac supports it, recognition happens on-device.</string>
 </dict>
 </plist>
 PLIST

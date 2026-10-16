@@ -57,6 +57,20 @@ final class ChatModel: ObservableObject {
     /// Raw API messages (assistant turns replayed unchanged).
     private var history: [JSONValue] = []
     private var task: Task<Void, Never>?
+
+    // Short-term conversation memory (never persisted).
+    @Published private(set) var context = ConversationContext()
+    private var lastUndo: (summary: String, action: @MainActor () -> Void, at: Date)?
+    private var recentLocal: [(user: String, reply: String, at: Date)] = []
+    private var lastActivity = Date.distantPast
+    /// Whether the message currently being answered was spoken.
+    private(set) var currentInputIsVoice = false
+    /// Conversation context and AI memory reset after this much silence.
+    static let idleReset: TimeInterval = 30 * 60
+
+    /// Called with each *final* reply (after any actions have finished), so the
+    /// voice layer can speak it. Interim "working on it" text is never passed here.
+    var onReply: (_ text: String, _ inputWasVoice: Bool) -> Void = { _, _ in }
     /// Above this many API messages, start a fresh context (append-only, never edited).
     private let historyLimit = 60
 
@@ -114,29 +128,73 @@ final class ChatModel: ObservableObject {
 
     var isBusy: Bool { if case .working = status { return true }; return pending != nil }
 
-    func send(_ raw: String) {
+    func send(_ raw: String, viaVoice: Bool = false) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isBusy else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastActivity) > Self.idleReset { startFreshContext() }
+        lastActivity = now
+        currentInputIsVoice = viaVoice
         messages.append(Message(id: UUID(), role: .user, text: text))
 
-        // 1. Local command? Run it on-device — no network, nothing shared.
-        if let command = CommandParser.parse(text, now: Date(), calendar: model.calendar) {
-            runLocal(command)
+        // 1. Follow-ups that depend on what we were just talking about.
+        if let followUp = context.resolve(text, now: now) {
+            switch followUp {
+            case .undoLast: undoLastAction()
+            case .command(let c): runLocal(c, said: text)
+            }
             return
         }
-        // 2. No AI configured: explain, keep local features working.
+        // 2. Local command? Run it on-device — no network, nothing shared.
+        if let command = CommandParser.parse(text, now: now, calendar: model.calendar) {
+            runLocal(command, said: text)
+            return
+        }
+        // 3. No AI configured: explain, keep local features working.
         guard aiState.isReady else {
-            messages.append(Message(id: UUID(), role: .assistant, text: """
+            reply("""
                 I can’t answer general questions until AI is connected (Settings › AI). \
-                I can still do these right now: “log 250 ml”, “focus for 25 minutes”, “add call mom to my tasks”, \
-                “remind me to stretch at 3 pm”, “show today’s progress”.
-                """, isLocal: true))
+                I can still do these right now: “I’ve had 300 ml”, “what’s my total?”, “start a 25-minute focus session”, \
+                “add call mom to my tasks”, “remind me to stretch at 3 pm”.
+                """, spoken: "I can do DeskPet things like logging water or starting a focus session. For general questions, connect AI in Settings.")
             persist()
             return
         }
-        // 3. Ask Claude.
+        // 4. Ask Claude.
         appendUserTurn(text)
         startLoop()
+    }
+
+    /// Adds an on-device assistant message and hands it to the voice layer.
+    private func reply(_ text: String, spoken: String? = nil, isError: Bool = false, chips: [Chip] = []) {
+        var msg = Message(id: UUID(), role: .assistant, text: text, isError: isError, isLocal: true)
+        msg.chips = chips
+        messages.append(msg)
+        onReply(spoken ?? text, currentInputIsVoice)
+    }
+
+    /// Reverses the most recent action from this conversation ("undo that").
+    func undoLastAction() {
+        guard let u = lastUndo, Date().timeIntervalSince(u.at) < 10 * 60 else {
+            reply("There’s nothing recent to undo.")
+            persist()
+            return
+        }
+        u.action()
+        lastUndo = nil
+        reply("Undone: \(u.summary).")
+        persist()
+    }
+
+    /// Forget the short-term topic and start a new AI context (history is append-only, so we start over).
+    private func startFreshContext() {
+        context.reset()
+        lastUndo = nil
+        recentLocal = []
+        if !history.isEmpty {
+            history = []
+            historyWasReset = true
+        }
     }
 
     func retry() {
@@ -166,31 +224,50 @@ final class ChatModel: ObservableObject {
         p.resume(decision)
     }
 
-    private func runLocal(_ command: AppCommand) {
+    private func runLocal(_ command: AppCommand, said: String) {
         if command.needsConfirmation {
             pending = Pending(title: "Confirm", detail: command.summary(defaultServing: model.hydrationSettings.defaultServingML) + "?",
                               allowAlwaysOption: false) { [weak self] d in
                 guard let self else { return }
                 if d == .deny {
-                    self.messages.append(Message(id: UUID(), role: .assistant, text: "Okay, I left it as is.", isLocal: true))
+                    self.reply("Okay, I left it as is.")
                 } else {
-                    self.finishLocal(command)
+                    self.finishLocal(command, said: said)
                 }
                 self.persist()
             }
             return
         }
-        finishLocal(command)
+        finishLocal(command, said: said)
         persist()
     }
 
-    private func finishLocal(_ command: AppCommand) {
+    /// Runs the command first; the confirmation is built from the *result*, so
+    /// "Logged 300 ml" is only ever said after the entry was actually saved.
+    private func finishLocal(_ command: AppCommand, said: String) {
         let result = CommandExecutor(model: model).run(command)
         if let dest = result.destination, case .open = command { onOpen(dest) }
-        var msg = Message(id: UUID(), role: .assistant, text: result.message, isError: result.style == .error, isLocal: true)
-        if !result.details.isEmpty { msg.text += "\n" + result.details.map { "• \($0)" }.joined(separator: "\n") }
-        if result.undo != nil { msg.chips = [Chip(text: "Done", style: result.style, undo: result.undo)] }
-        messages.append(msg)
+        var text = result.message
+        if !result.details.isEmpty { text += "\n" + result.details.map { "• \($0)" }.joined(separator: "\n") }
+        var chips: [Chip] = []
+        if result.style != .error {
+            context.note(command, at: Date(), defaultServing: model.hydrationSettings.defaultServingML,
+                         defaultFocus: model.focusSettings.focusMinutes)
+            if let undo = result.undo {
+                lastUndo = (result.message, undo, Date())
+                chips = [Chip(text: "Done", style: result.style, undo: undo)]
+            }
+        }
+        recentLocal.append((said, result.message, Date()))
+        if recentLocal.count > 3 { recentLocal.removeFirst() }
+        reply(text, spoken: spokenVersion(of: result), isError: result.style == .error, chips: chips)
+    }
+
+    /// Lists read better aloud as a count plus the first few items.
+    private func spokenVersion(of result: CommandResult) -> String {
+        guard !result.details.isEmpty else { return result.message }
+        let firstItems = result.details.prefix(3).joined(separator: "; ")
+        return result.message + ": " + firstItems + (result.details.count > 3 ? ", and more." : ".")
     }
 
     /// Set by the coordinator so chat can navigate (e.g. "open settings").
@@ -201,8 +278,20 @@ final class ChatModel: ObservableObject {
         // system prompt stays constant and history stays append-only.
         let f = DateFormatter()
         f.dateFormat = "EEEE yyyy-MM-dd HH:mm"
-        let context = "[Local time: \(f.string(from: Date())) (\(TimeZone.current.identifier))]"
-        let blocks: [JSONValue] = [["type": "text", "text": .string(context)], ["type": "text", "text": .string(text)]]
+        var note = "[Local time: \(f.string(from: Date())) (\(TimeZone.current.identifier))]"
+        // Short-term context: what the user just did on-device in this conversation
+        // (skipped entirely if they don't share DeskPet data with the AI).
+        if settings.aiDataAccess != .never {
+            let recent = recentLocal.filter { Date().timeIntervalSince($0.at) < 10 * 60 }
+            if !recent.isEmpty {
+                note += "\n[Just handled on device: " + recent.map { "“\($0.user)” → \($0.reply)" }.joined(separator: "; ") + "]"
+            }
+        }
+        if currentInputIsVoice {
+            note += "\n[Spoken input; your reply will be read aloud: 1–2 short sentences, no lists or markdown.]"
+        }
+        recentLocal = []
+        let blocks: [JSONValue] = [["type": "text", "text": .string(note)], ["type": "text", "text": .string(text)]]
         if history.count >= historyLimit {
             history = []
             historyWasReset = true
@@ -233,7 +322,9 @@ final class ChatModel: ObservableObject {
         Rules:
         - Only take actions the user explicitly asked for. If details are missing (amount, time), ask one short question. \
         When you suggest a plan, offer to create the tasks instead of creating them unprompted.
-        - Before acting, say in one short sentence what you're about to do; afterwards confirm the result plainly.
+        - Never say an action is done until its tool result confirms success. If a tool returns an error, say so plainly \
+        and don't pretend it worked. Keep any text before a tool call to a few words.
+        - For "undo that", call the matching tool (e.g. undo_last_water) rather than just saying it's undone.
         - Reading the user's tasks, notes or stats requires a read tool and the user may decline — respect that.
         - Each user message starts with their local time. For due/remind_at, use local ISO 8601 without an offset (e.g. 2026-10-15T19:00).
         - You cannot see the screen, files, clipboard, calendar, email or other apps, and cannot run commands. \
@@ -285,6 +376,7 @@ final class ChatModel: ObservableObject {
                 // Keep history valid: drop the unanswered user turn.
                 if history.last?["role"]?.string == "user" { history.removeLast() }
                 messages.append(Message(id: UUID(), role: .assistant, text: "I can’t help with that one, sorry. Anything else?"))
+                onReply("I can’t help with that one, sorry.", currentInputIsVoice)
                 status = .idle
                 persist()
                 return
@@ -311,12 +403,17 @@ final class ChatModel: ObservableObject {
             }
             if stop == "pause_turn" { continue }
 
-            var reply = text
-            if stop == "max_tokens" { reply += reply.isEmpty ? "(My answer was cut short.)" : "\n\n(My answer was cut short.)" }
-            var msg = Message(id: UUID(), role: .assistant, text: reply.isEmpty ? "Done." : reply)
+            var finalText = text
+            if finalText.isEmpty {
+                // No closing words from the model: confirm from the actual tool results.
+                finalText = chips.isEmpty ? "Done." : chips.map(\.text).joined(separator: " ")
+            }
+            if stop == "max_tokens" { finalText += "\n\n(My answer was cut short.)" }
+            var msg = Message(id: UUID(), role: .assistant, text: finalText)
             msg.chips = chips
             messages.append(msg)
             status = .idle
+            onReply(finalText, currentInputIsVoice)
             persist()
             return
         }
@@ -367,6 +464,11 @@ final class ChatModel: ObservableObject {
         var chip: Chip?
         if let r = outcome.result {
             chip = Chip(text: r.message, style: r.style, undo: r.undo)
+            if r.style != .error, case .command(let c) = planned.kind {
+                context.note(c, at: Date(), defaultServing: model.hydrationSettings.defaultServingML,
+                             defaultFocus: model.focusSettings.focusMinutes)
+                if let undo = r.undo { lastUndo = (r.message, undo, Date()) }
+            }
         }
         return (result(outcome.text, error: outcome.isError), chip)
     }
@@ -385,6 +487,7 @@ final class ChatModel: ObservableObject {
     private func fail(_ e: AIError) {
         log.error("AI request failed: \(e.localizedDescription, privacy: .public)")
         status = .failed(e)
+        onReply("Sorry, " + (e.errorDescription ?? "something went wrong."), currentInputIsVoice)
         persist()
     }
 

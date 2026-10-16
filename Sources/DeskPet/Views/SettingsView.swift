@@ -3,7 +3,7 @@ import DeskPetCore
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, pet, water, focus, shortcuts, ai, privacy
+    case general, pet, water, focus, voice, shortcuts, ai, privacy
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -11,6 +11,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .pet: return "Pet"
         case .water: return "Water"
         case .focus: return "Focus"
+        case .voice: return "Voice"
         case .shortcuts: return "Shortcuts"
         case .ai: return "AI"
         case .privacy: return "Privacy & Data"
@@ -22,6 +23,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .pet: return "pawprint"
         case .water: return "drop"
         case .focus: return "timer"
+        case .voice: return "waveform"
         case .shortcuts: return "command"
         case .ai: return "sparkles"
         case .privacy: return "lock.shield"
@@ -50,6 +52,7 @@ struct SettingsView: View {
     @ObservedObject var notifications: NotificationManager
     @ObservedObject var hotkeys: HotKeyManager
     @ObservedObject var chat: ChatModel
+    @ObservedObject var voice: VoiceController
     var actions: SettingsActions
 
     var body: some View {
@@ -62,6 +65,8 @@ struct SettingsView: View {
                 .tabItem { Label(SettingsTab.water.title, systemImage: SettingsTab.water.symbol) }.tag(SettingsTab.water)
             FocusSettingsView(model: model)
                 .tabItem { Label(SettingsTab.focus.title, systemImage: SettingsTab.focus.symbol) }.tag(SettingsTab.focus)
+            VoiceSettings(settings: settings, voice: voice, recognizer: voice.input)
+                .tabItem { Label(SettingsTab.voice.title, systemImage: SettingsTab.voice.symbol) }.tag(SettingsTab.voice)
             ShortcutSettings(hotkeys: hotkeys)
                 .tabItem { Label(SettingsTab.shortcuts.title, systemImage: SettingsTab.shortcuts.symbol) }.tag(SettingsTab.shortcuts)
             AISettings(settings: settings, chat: chat)
@@ -69,7 +74,7 @@ struct SettingsView: View {
             PrivacySettings(model: model, actions: actions)
                 .tabItem { Label(SettingsTab.privacy.title, systemImage: SettingsTab.privacy.symbol) }.tag(SettingsTab.privacy)
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 560, height: 580)
         .dpPanelStyle()
     }
 }
@@ -408,6 +413,91 @@ private struct FocusSettingsView: View {
     }
 }
 
+// MARK: - Voice
+
+private struct VoiceSettings: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var voice: VoiceController
+    @ObservedObject var recognizer: SpeechRecognizerService
+    @State private var voices: [SpeechSynthesizerService.VoiceOption] = []
+
+    private static let languages = ["en-US", "en-GB", "en-AU", "en-IN", "en-CA", "es-ES", "es-MX", "fr-FR", "de-DE",
+                                    "it-IT", "pt-BR", "ja-JP", "zh-CN", "ko-KR", "hi-IN", "nl-NL", "sv-SE"]
+
+    var body: some View {
+        Form {
+            Section("Talking to your pet") {
+                Toggle("Voice input (push-to-talk)", isOn: $settings.voiceInputEnabled)
+                    .disabled(!SpeechRecognizerService.isSupportedBuild)
+                Hint(text: "The microphone turns on only while you hold the mic button or ⌃⌥V (or after one tap, until you tap again — 60 seconds max). It is never on in the background.")
+                HStack {
+                    Text("Permission")
+                    Spacer()
+                    Text(permissionText).foregroundStyle(.secondary)
+                    if recognizer.permission == .denied || recognizer.permission == .restricted {
+                        Button("Microphone…") { SpeechRecognizerService.openPrivacySettings(microphone: true) }.controlSize(.small)
+                        Button("Speech…") { SpeechRecognizerService.openPrivacySettings(microphone: false) }.controlSize(.small)
+                    }
+                }
+                Picker("Language", selection: $settings.recognitionLocale) {
+                    ForEach(languageOptions, id: \.self) { id in
+                        Text(Locale.current.localizedString(forIdentifier: id) ?? id).tag(id)
+                    }
+                }
+                Toggle("Keep speech recognition on this Mac", isOn: $settings.onDeviceRecognitionOnly)
+                Hint(text: settings.onDeviceRecognitionOnly
+                     ? "Audio never leaves your Mac. If on-device recognition isn’t available for the language, voice input stays off and you can type."
+                     : "If on-device recognition isn’t available, audio may be sent to Apple for transcription (Apple’s privacy policy applies). DeskPet never stores recordings.")
+            }
+            Section("Spoken replies") {
+                Picker("Read replies aloud", selection: $settings.spokenReplies) {
+                    ForEach(SpokenReplies.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Mute", isOn: $settings.voiceMuted)
+                Picker("Voice", selection: $settings.voiceIdentifier) {
+                    Text("Automatic (best for language)").tag("")
+                    ForEach(voices) { v in Text("\(v.name) · \(v.quality)").tag(v.id) }
+                }
+                HStack {
+                    Text("Speed")
+                    Slider(value: $settings.speechRate, in: 0...1) { Text("Speed") }
+                        .accessibilityLabel("Speaking speed")
+                    Button(voice.activity == .speaking ? "Stop" : "Preview") {
+                        voice.activity == .speaking ? voice.stopSpeaking() : voice.previewVoice()
+                    }
+                    .controlSize(.small)
+                }
+                Hint(text: "Uses the built-in macOS voices. Download higher-quality voices in System Settings › Accessibility › Spoken Content › System Voice › Manage Voices.")
+            }
+            Section("Text-only") {
+                Hint(text: "Everything works by typing, too. Turn off voice input and set replies to “Never” for a text-only conversation.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { voices = SpeechSynthesizerService.voices(forLanguage: settings.recognitionLocale) }
+        .onChange(of: settings.recognitionLocale) { _, id in
+            voices = SpeechSynthesizerService.voices(forLanguage: id)
+            if !voices.contains(where: { $0.id == settings.voiceIdentifier }) { settings.voiceIdentifier = "" }
+        }
+    }
+
+    private var languageOptions: [String] {
+        var list = Self.languages
+        if !list.contains(settings.recognitionLocale) { list.insert(settings.recognitionLocale, at: 0) }
+        return list
+    }
+
+    private var permissionText: String {
+        switch recognizer.permission {
+        case .granted: return "Allowed"
+        case .notDetermined: return "Asked the first time you talk"
+        case .denied: return "Denied"
+        case .restricted: return "Restricted"
+        case .unsupported: return "Needs the app bundle"
+        }
+    }
+}
+
 // MARK: - Shortcuts
 
 private struct ShortcutSettings: View {
@@ -488,17 +578,19 @@ private struct AISettings: View {
                 } else {
                     HStack {
                         SecureField("sk-ant-…", text: $keyInput).textFieldStyle(.roundedBorder)
-                        Button("Save") {
-                            do {
-                                try KeychainStore.saveAPIKey(keyInput)
-                                keyInput = ""
-                                hasKey = true
+                            .onSubmit(saveKey)
+                        Button {
+                            // Reads the clipboard only when clicked.
+                            if let s = NSPasteboard.general.string(forType: .string) {
+                                keyInput = s.trimmingCharacters(in: .whitespacesAndNewlines)
                                 testResult = nil
-                            } catch {
-                                testResult = (false, error.localizedDescription)
+                            } else {
+                                testResult = (false, "The clipboard doesn’t contain text.")
                             }
-                        }
-                        .disabled(keyInput.trimmingCharacters(in: .whitespaces).count < 10)
+                        } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+                        .help("Paste the key from the clipboard")
+                        Button("Save", action: saveKey)
+                            .disabled(keyInput.trimmingCharacters(in: .whitespaces).count < 10)
                     }
                 }
                 Hint(text: "Stored only in your login Keychain — never in DeskPet’s files, settings, logs or the app itself. Get a key at console.anthropic.com. Usage is billed to your Anthropic account.")
@@ -531,6 +623,19 @@ private struct AISettings: View {
         .formStyle(.grouped)
         .confirmationDialog("Clear the chat history?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) { chat.clear() }
+        }
+    }
+
+    private func saveKey() {
+        let key = keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.count >= 10 else { return }
+        do {
+            try KeychainStore.saveAPIKey(key)
+            keyInput = ""
+            hasKey = true
+            testResult = nil
+        } catch {
+            testResult = (false, error.localizedDescription)
         }
     }
 

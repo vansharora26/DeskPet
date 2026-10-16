@@ -20,7 +20,7 @@ final class PetBehavior {
         self.notifications = notifications
     }
 
-    func start() {
+    func start(voice: VoiceController) {
         pet.onPetted = { [weak model] in model?.notePetting() }
 
         model.events
@@ -28,10 +28,11 @@ final class PetBehavior {
             .sink { [weak self] in self?.handle($0) }
             .store(in: &cancellables)
 
-        // Ongoing mode: focus headband, break mug, thirsty droplet.
-        Publishers.CombineLatest(model.$data.map(\.focus.timer).removeDuplicates(), pet.$callout.map { $0?.kind })
+        // Ongoing mode: voice conversation first, then thirsty droplet, focus headband, break mug.
+        Publishers.CombineLatest3(model.$data.map(\.focus.timer).removeDuplicates(), pet.$callout.map { $0?.kind },
+                                  voice.$activity.removeDuplicates())
             .receive(on: RunLoop.main)
-            .sink { [weak self] timer, callout in self?.updateMode(timer: timer, callout: callout) }
+            .sink { [weak self] timer, callout, activity in self?.updateMode(timer: timer, callout: callout, voice: activity) }
             .store(in: &cancellables)
 
         // Appearance from the wardrobe (only items the user has unlocked).
@@ -45,9 +46,12 @@ final class PetBehavior {
             .store(in: &cancellables)
     }
 
-    private func updateMode(timer: FocusTimer?, callout: PetCallout.Kind?) {
+    private func updateMode(timer: FocusTimer?, callout: PetCallout.Kind?, voice: VoiceController.Activity) {
         let mode: PetMode
-        if callout == .hydration { mode = .thirsty }
+        if voice == .listening { mode = .listening }
+        else if voice == .thinking { mode = .thinking }
+        else if voice == .speaking { mode = .speaking }
+        else if callout == .hydration { mode = .thirsty }
         else if let t = timer, t.isRunning { mode = t.phase.isBreak ? .resting : .focused }
         else { mode = .none }
         if pet.mode != mode { pet.mode = mode }

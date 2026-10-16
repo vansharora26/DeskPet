@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
     private var pet: PetViewModel!
     private var chat: ChatModel!
+    private var voice: VoiceController!
     private var router: WindowRouter!
     private var behavior: PetBehavior!
     private var scheduler: ReminderScheduler!
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = settings.appearance.nsAppearance
+        MainMenu.install() // routes ⌘X/⌘C/⌘V/⌘A/⌘Z to text fields
 
         // Models
         model = AppModel(store: JSONDocumentStore(fileURL: dataDirectory.appendingPathComponent("deskpet-data.json")))
@@ -37,12 +39,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chat = ChatModel(model: model, settings: settings, pet: pet,
                          store: JSONDocumentStore(fileURL: dataDirectory.appendingPathComponent("chat.json")))
 
+        voice = VoiceController(chat: chat, settings: settings, pet: pet)
+
         // Windows & behaviour
         router = WindowRouter(model: model, chat: chat, pet: pet, settings: settings)
         router.makeSettingsView = { [unowned self] in AnyView(self.settingsView()) }
+        router.makeConversationView = { [unowned self] in
+            AnyView(ConversationView(chat: self.chat, pet: self.pet, voice: self.voice, recognizer: self.voice.input,
+                                     settings: self.settings, openSettings: { [weak self] t in self?.router.openSettings(t) }))
+        }
+        // Closing the conversation always turns the microphone off.
+        router.onConversationClosed = { [weak self] in self?.voice.cancelListening() }
+        router.petFrame = { [weak self] in self?.petWindow.isVisible == true ? self?.petWindow.panel.frame : nil }
         chat.onOpen = { [weak self] d in self?.router.open(d) }
         behavior = PetBehavior(model: model, pet: pet, router: router, notifications: notifications)
-        behavior.start()
+        behavior.start(voice: voice)
 
         menuActions = makeMenuActions()
         buildPetWindow()
@@ -59,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Global shortcuts (Carbon hot keys — no keyboard monitoring)
         hotkeys.handler = { [weak self] action in self?.handleHotKey(action) }
+        hotkeys.releaseHandler = { [weak self] action in
+            if action == .pushToTalk { self?.voice.pressEnded() }
+        }
         hotkeys.start()
 
         // Visibility follows the setting.
@@ -82,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        voice?.cancelListening()
+        voice?.stopSpeaking()
         model?.shutdown()
         pet?.shutdown()
     }
@@ -109,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             openFocus: { [weak self] in self?.router.open(.focus) },
-            openChat: { [weak self] in self?.router.open(.chat) },
+            openChat: { [weak self] in self?.router.showConversation() },
             openCapture: { [weak self] in self?.router.open(.capture) },
             moreMenu: { [weak self] in
                 guard let self else { return nil }
@@ -141,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             togglePet: { [weak self] in self?.settings.petVisible.toggle() },
             isPetVisible: { [weak self] in self?.petWindow.isVisible ?? false },
             open: { [weak self] d in self?.router.open(d) },
+            talk: { [weak self] in self?.router.showConversation() },
             openSettings: { [weak self] t in self?.router.openSettings(t) },
             openWelcome: { [weak self] in self?.showWelcome(isUpgrade: false) },
             resetPosition: { [weak self] in
@@ -169,7 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch action {
         case .launcher: router.showLauncher()
         case .capture: router.showCapture()
-        case .chat: router.open(.chat)
+        case .chat: router.showConversation()
+        case .pushToTalk:
+            router.showConversation()
+            voice.pressBegan()
         case .logWater: run(.logWater(ml: nil))
         case .togglePet: settings.petVisible.toggle()
         case .keyboardMode: enterKeyboardMode()
@@ -230,7 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func settingsView() -> some View {
         SettingsView(
             state: router.settingsState, pet: pet, settings: settings, model: model, loginItem: loginItem,
-            notifications: notifications, hotkeys: hotkeys, chat: chat,
+            notifications: notifications, hotkeys: hotkeys, chat: chat, voice: voice,
             actions: SettingsActions(
                 export: { [weak self] in self?.exportData() },
                 deleteAll: { [weak self] in self?.deleteAllData() },

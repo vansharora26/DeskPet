@@ -148,8 +148,8 @@ struct LauncherView: View {
 
     private func symbol(for c: AppCommand) -> String {
         switch c {
-        case .logWater, .undoWater, .setWaterGoal: return "drop.fill"
-        case .startFocus, .pauseFocus, .resumeFocus, .stopFocus, .skipPhase: return "timer"
+        case .logWater, .undoWater, .setWaterGoal, .waterTotal: return "drop.fill"
+        case .startFocus, .pauseFocus, .resumeFocus, .stopFocus, .skipPhase, .timerStatus: return "timer"
         case .startBreak: return "cup.and.saucer.fill"
         case .createTask, .completeTask, .showTasks: return "checklist"
         case .createNote: return "square.and.pencil"

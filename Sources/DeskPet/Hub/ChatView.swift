@@ -128,7 +128,7 @@ struct ChatView: View {
     }
 }
 
-private struct MessageBubble: View {
+struct MessageBubble: View {
     let message: ChatModel.Message
     @State private var undone: Set<UUID> = []
 
@@ -172,7 +172,7 @@ private struct MessageBubble: View {
     }
 }
 
-private struct PendingCard: View {
+struct PendingCard: View {
     let pending: ChatModel.Pending
     @ObservedObject var chat: ChatModel
 
@@ -194,7 +194,7 @@ private struct PendingCard: View {
     }
 }
 
-private struct ThinkingRow: View {
+struct ThinkingRow: View {
     var text: String
     @State private var phase = 0
 

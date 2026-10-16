@@ -25,6 +25,7 @@ enum PetMenu {
         var togglePet: () -> Void
         var isPetVisible: () -> Bool
         var open: (Destination) -> Void
+        var talk: () -> Void
         var openSettings: (SettingsTab) -> Void
         var openWelcome: () -> Void
         var resetPosition: () -> Void
@@ -57,6 +58,9 @@ enum PetMenu {
         case .focused: return "\(pet.name) is focusing with you"
         case .resting: return "\(pet.name) is on a break"
         case .thirsty: return "\(pet.name) thinks it’s water time"
+        case .listening: return "\(pet.name) is listening"
+        case .thinking: return "\(pet.name) is thinking"
+        case .speaking: return "\(pet.name) is talking"
         case .none: break
         }
         switch pet.stats.mood {
@@ -86,6 +90,7 @@ enum PetMenu {
         }
         menu.addItem(.separator())
 
+        menu.addItem(ActionMenuItem("Talk to \(pet.name)…", symbol: "waveform") { a.talk() })
         menu.addItem(ActionMenuItem("Chat…", symbol: "bubble.left.and.text.bubble.right") { a.open(.chat) })
         menu.addItem(ActionMenuItem("Quick Capture…", symbol: "square.and.pencil") { a.open(.capture) })
         menu.addItem(ActionMenuItem("Command Launcher…", symbol: "command") { a.open(.launcher) })

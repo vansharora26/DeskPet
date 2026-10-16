@@ -132,6 +132,8 @@ struct PetStage: View, Equatable {
         case sip(age: TimeInterval)
         case droplet(t: TimeInterval)
         case mug(t: TimeInterval)
+        case listening(t: TimeInterval)
+        case thinking(t: TimeInterval)
     }
 
     let frame: PetFrame
@@ -202,12 +204,48 @@ struct PetStage: View, Equatable {
         case .droplet(let t):
             PixelImageView(image: PropSprites.dropletImage, pixel: p * 0.8)
                 .offset(x: p * 16.5, y: p * (top - 2 + sin(t * 3) * 0.6))
+        case .listening(let t):
+            // Three pixel "sound waves" pulsing out from the ear.
+            ForEach(0..<3, id: \.self) { i in
+                let phase = animate ? (t * 1.6 - Double(i) * 0.33).truncatingRemainder(dividingBy: 1) : 0.6
+                // Arcs grow outward and stay centred on the ear.
+                SoundArc(pixel: p * 0.7, height: 1 + i * 2)
+                    .offset(x: p * (18.3 + Double(i) * 2.1), y: p * (top + 3.2 - Double(i) * 0.7))
+                    .opacity(animate ? max(0.15, 1 - abs(phase - 0.5) * 1.6) : 0.8)
+            }
+        case .thinking(let t):
+            // "…" dots that light up in turn above the head.
+            ForEach(0..<3, id: \.self) { i in
+                let lit = animate ? Int(t / 0.35) % 4 > i : true
+                Rectangle()
+                    .fill(PixelPalette.outline.opacity(lit ? 0.9 : 0.25))
+                    .frame(width: p * 1.2, height: p * 1.2)
+                    .offset(x: p * (12.5 + Double(i) * 2.2), y: p * (top - 2.5 - Double(i) * 0.9))
+            }
         case .mug(let t):
             ZStack(alignment: .topLeading) {
                 PixelImageView(image: PropSprites.mugImage, pixel: p * 0.8)
             }
             .offset(x: -p * 5.5, y: p * (top + 13 + (animate ? sin(t * 1.5) * 0.15 : 0)))
         }
+    }
+}
+
+/// A small pixel bracket ")" used for the listening sound waves.
+private struct SoundArc: View {
+    let pixel: CGFloat
+    let height: Int
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<(height + 2), id: \.self) { row in
+                let edge = row == 0 || row == height + 1
+                Rectangle().fill(DP.water)
+                    .frame(width: pixel, height: pixel)
+                    .offset(x: edge ? 0 : pixel)
+            }
+        }
+        .frame(width: pixel * 2, alignment: .leading)
     }
 }
 

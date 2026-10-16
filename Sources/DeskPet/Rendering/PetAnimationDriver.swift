@@ -45,7 +45,8 @@ final class PetAnimationDriver: ObservableObject {
         guard animate, windowState.isVisible else { return 0 }
         if pet.reaction != nil { return 15 }  // hops, hearts, chewing
         if pet.isSleeping { return 10 }       // drifting z's
-        if pet.mode == .thirsty || pet.mode == .resting { return 8 } // bobbing droplet, steam
+        if pet.mode == .speaking || pet.mode == .listening { return 12 } // lip movement, sound waves
+        if pet.mode == .thirsty || pet.mode == .resting || pet.mode == .thinking { return 8 } // droplet, steam, dots
         return 6                              // blinks & tail swish (blinks outlast a frame)
     }
 
@@ -94,6 +95,8 @@ final class PetAnimationDriver: ObservableObject {
                 switch pet.mode {
                 case .thirsty: props = .droplet(t: loop)
                 case .resting: props = .mug(t: loop)
+                case .listening: props = .listening(t: loop)
+                case .thinking: props = .thinking(t: loop)
                 default: props = .none
                 }
             }

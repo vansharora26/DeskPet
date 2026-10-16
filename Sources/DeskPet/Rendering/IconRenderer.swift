@@ -119,6 +119,18 @@ enum IconRenderer {
             PreviewTile(title: "Petted", stage: stage(input(.petted, age: 0.6), at: 1, props: .petted(age: 0.6)),
                         speech: "More chin scritches pls"),
         ]
+        let voice: [PreviewTile] = [
+            PreviewTile(title: "Listening", stage: stage(input(nil, mode: .listening), at: 1.2, props: .listening(t: 1.2)),
+                        speech: "I’ve had 300 ml of water…"),
+            PreviewTile(title: "Thinking", stage: stage(input(nil, mode: .thinking), at: 1, props: .thinking(t: 1.1))),
+            PreviewTile(title: "Speaking", stage: stage(input(nil, mode: .speaking), at: 1.0, props: .none),
+                        speech: "Logged 300 ml · 1.2 L of 2.0 L today"),
+            PreviewTile(title: "Speaking (tuxedo)", stage: stage(input(nil, mode: .speaking, coat: .tuxedo, accessory: .headphones),
+                                                                at: 1.0, props: .none)),
+        ]
+        try render(HStack(spacing: 16) { ForEach(0..<4, id: \.self) { voice[$0] } }
+            .padding(20).background(Color.white).environment(\.colorScheme, .light),
+                   to: dir.appendingPathComponent("voice.png"))
         try render(sheet(states), to: dir.appendingPathComponent("states.png"))
         try render(sheet(wardrobe), to: dir.appendingPathComponent("wardrobe.png"))
     }

@@ -39,14 +39,15 @@ struct Shortcut: Codable, Equatable {
 
 /// Global actions that can have a keyboard shortcut.
 enum HotKeyAction: String, CaseIterable, Codable, Identifiable {
-    case launcher, capture, chat, logWater, togglePet, keyboardMode
+    case launcher, capture, chat, pushToTalk, logWater, togglePet, keyboardMode
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .launcher: return "Command launcher"
         case .capture: return "Quick capture"
-        case .chat: return "Chat"
+        case .chat: return "Talk to your pet"
+        case .pushToTalk: return "Push to talk (hold)"
         case .logWater: return "Log a glass of water"
         case .togglePet: return "Show / hide pet"
         case .keyboardMode: return "Control pet with keyboard"
@@ -59,6 +60,7 @@ enum HotKeyAction: String, CaseIterable, Codable, Identifiable {
         case .launcher: return Shortcut(keyCode: UInt32(kVK_Space), carbonModifiers: mods, display: "⌃⌥Space")
         case .capture: return Shortcut(keyCode: UInt32(kVK_ANSI_N), carbonModifiers: mods, display: "⌃⌥N")
         case .chat: return Shortcut(keyCode: UInt32(kVK_ANSI_C), carbonModifiers: mods, display: "⌃⌥C")
+        case .pushToTalk: return Shortcut(keyCode: UInt32(kVK_ANSI_V), carbonModifiers: mods, display: "⌃⌥V")
         case .logWater: return Shortcut(keyCode: UInt32(kVK_ANSI_W), carbonModifiers: mods, display: "⌃⌥W")
         case .togglePet: return Shortcut(keyCode: UInt32(kVK_ANSI_H), carbonModifiers: mods, display: "⌃⌥H")
         case .keyboardMode: return Shortcut(keyCode: UInt32(kVK_ANSI_P), carbonModifiers: mods, display: "⌃⌥P")
@@ -75,6 +77,8 @@ final class HotKeyManager: ObservableObject {
     /// Actions whose shortcut couldn't be registered (already taken by another app).
     @Published private(set) var conflicts: Set<HotKeyAction> = []
     var handler: (HotKeyAction) -> Void = { _ in }
+    /// Key-up for actions that care (push-to-talk).
+    var releaseHandler: (HotKeyAction) -> Void = { _ in }
 
     private var refs: [HotKeyAction: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
@@ -122,7 +126,8 @@ final class HotKeyManager: ObservableObject {
 
     private func installHandler() {
         guard eventHandler == nil else { return }
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                     EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
             guard let event, let userData else { return OSStatus(eventNotHandledErr) }
@@ -132,14 +137,15 @@ final class HotKeyManager: ObservableObject {
             guard status == noErr else { return status }
             let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
             let id = hk.id
-            DispatchQueue.main.async { MainActor.assumeIsolated { manager.fire(id) } }
+            let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
+            DispatchQueue.main.async { MainActor.assumeIsolated { manager.fire(id, pressed: pressed) } }
             return noErr
-        }, 1, &spec, selfPtr, &eventHandler)
+        }, 2, &specs, selfPtr, &eventHandler)
     }
 
-    private func fire(_ id: UInt32) {
+    private func fire(_ id: UInt32, pressed: Bool) {
         guard let action = HotKeyAction.allCases.first(where: { Self.numericID($0) == id }) else { return }
-        handler(action)
+        if pressed { handler(action) } else { releaseHandler(action) }
     }
 
     private static func numericID(_ a: HotKeyAction) -> UInt32 {

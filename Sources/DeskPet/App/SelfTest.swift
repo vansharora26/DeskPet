@@ -1,5 +1,8 @@
+import AppKit
+import AVFoundation
 import DeskPetCore
 import Foundation
+import Speech
 
 /// `DeskPet --self-test`: exercises the real app layer (AppModel, CommandExecutor,
 /// AI tool validation, export, delete) against a temporary data folder, without
@@ -95,6 +98,89 @@ enum SelfTest {
         if case .success(let p) = plan("get_focus_status", .object([:])) { check("AI focus status is not personal", !p.isDataRead) }
         else { check("AI focus status is not personal", false) }
 
+        // Conversation: real actions, context follow-ups, confirmation only after success.
+        do {
+            let petDir = dir.appendingPathComponent("pet")
+            let settings = AppSettings(defaults: UserDefaults(suiteName: "DeskPetSelfTest-\(UUID().uuidString)")!)
+            let pet = PetViewModel(store: PetStore(directory: petDir), settings: settings, sound: SoundPlayer())
+            let chat = ChatModel(model: model, settings: settings, pet: pet,
+                                 store: JSONDocumentStore(fileURL: dir.appendingPathComponent("chat.json")))
+            var spoken: [String] = []
+            chat.onReply = { text, _ in spoken.append(text) }
+            let before = model.todayWaterML
+            func last() -> String { chat.messages.last?.text ?? "" }
+
+            chat.send("I've had 300 ml of water", viaVoice: true)
+            check("chat: spoken water log is saved", model.todayWaterML == before + 300 && last().hasPrefix("Logged 300 ml"), last())
+            chat.send("What's my total?", viaVoice: true)
+            check("chat: total reflects saved data", last().contains(AppCommand.formatML(model.todayWaterML)), last())
+            chat.send("another one")
+            check("chat: 'another one' repeats 300 ml", model.todayWaterML == before + 600, last())
+            chat.send("undo that")
+            check("chat: 'undo that' reverses it", model.todayWaterML == before + 300 && last().hasPrefix("Undone"), last())
+            chat.send("I've had 9000 ml of water")
+            check("chat: failed action is not confirmed", model.todayWaterML == before + 300 && !last().contains("Logged")
+                  && chat.messages.last?.isError == true, last())
+            chat.send("Start a 25-minute focus session")
+            check("chat: focus session started", model.focusTimerState?.phase == .focus && last().hasPrefix("Focus started"), last())
+            chat.send("what's my total")
+            check("chat: total follows focus topic", last().contains("left in your focus session"), last())
+            chat.send("tell me a joke about cats")
+            check("chat: no AI configured → text-only explanation, no fake answer",
+                  chat.messages.last?.isLocal == true && last().contains("AI"), last())
+            check("chat: every reply was handed to the voice layer", spoken.count == 8, "\(spoken.count) replies")
+            try? model.stopFocus()
+
+            // Voice layer (no microphone is ever opened here).
+            let voice = VoiceController(chat: chat, settings: settings, pet: pet)
+            settings.spokenReplies = .whenISpeak
+            check("voice: speaks replies to spoken input", voice.shouldSpeak(fromVoice: true) && !voice.shouldSpeak(fromVoice: false))
+            settings.voiceMuted = true
+            check("voice: mute silences replies", !voice.shouldSpeak(fromVoice: true))
+            settings.voiceMuted = false
+            settings.spokenReplies = .never
+            check("voice: text-only mode never speaks", !voice.shouldSpeak(fromVoice: true))
+            settings.spokenReplies = .always
+            check("voice: 'always' speaks typed replies too", voice.shouldSpeak(fromVoice: false))
+
+            if !SpeechRecognizerService.isSupportedBuild {
+                voice.pressBegan()
+                check("voice: unsupported build falls back to text, mic stays off",
+                      voice.input.state == .idle && voice.notice != nil, voice.notice ?? "")
+            } else {
+                check("voice: bundle declares mic + speech usage", true, "permission: \(voice.input.permission)")
+            }
+            settings.voiceInputEnabled = false
+            voice.pressBegan()
+            check("voice: disabling voice input keeps the mic off", voice.input.state == .idle && voice.notice != nil)
+
+            // Text-to-speech renders real audio — silently, into a buffer.
+            let utterance = SpeechSynthesizerService.makeUtterance("Logged 300 ml · 1.2 L of 2.0 L today 🎉",
+                                                                  voiceID: "", languageID: "en-US", rate: 0.5)
+            check("tts: spoken text is cleaned", utterance?.speechString == "Logged 300 millilitres, 1.2 litres of 2.0 litres today.",
+                  utterance?.speechString ?? "nil")
+            check("tts: a native voice is available", utterance?.voice != nil, utterance?.voice?.name ?? "none")
+            if let utterance {
+                let frames = renderSilently(utterance)
+                check("tts: synthesizer produces audio", frames > 4_000, "\(frames) frames")
+            }
+
+            // Speech → text → action round trip, only if Speech access was already granted
+            // (never triggers a permission prompt; no microphone involved).
+            if SpeechRecognizerService.isSupportedBuild && SFSpeechRecognizer.authorizationStatus() == .authorized {
+                let heard = transcribeSpoken("I've had 300 milliliters of water", in: dir)
+                let before = model.todayWaterML
+                chat.send(heard ?? "", viaVoice: true)
+                check("stt: spoken phrase recognised and logged on-device", model.todayWaterML == before + 300, heard ?? "no transcript")
+            } else {
+                print("SKIP  stt round trip — Speech Recognition permission not granted (run once from the app first)")
+            }
+            pet.eraseAndStopSaving()
+        }
+
+        // Text editing: ⌘V reaches text fields (incl. the secure API-key field) via the main menu.
+        checkPaste()
+
         // Export & delete.
         do {
             let folder = try model.export(to: dir, pet: nil)
@@ -102,7 +188,8 @@ enum SelfTest {
             check("export writes JSON + CSVs", names == ["deskpet.json", "water.csv", "focus.csv", "notes-and-tasks.csv"],
                   names.sorted().joined(separator: ", "))
             let csv = (try? String(contentsOf: folder.appendingPathComponent("water.csv"), encoding: .utf8)) ?? ""
-            check("water CSV has rows", csv.split(separator: "\r\n").count == 3)
+            let rows = csv.split(separator: "\r\n").count - 1
+            check("water CSV has one row per entry", rows == model.data.hydration.entries.count, "\(rows) rows")
         } catch {
             check("export", false, error.localizedDescription)
         }
@@ -111,5 +198,97 @@ enum SelfTest {
 
         print(failures == 0 ? "\nAll self-tests passed." : "\n\(failures) self-test(s) FAILED.")
         return failures == 0 ? 0 : 1
+    }
+
+    /// Renders an utterance to PCM buffers without playing it; returns the frame count.
+    private static func renderSilently(_ utterance: AVSpeechUtterance) -> Int {
+        let synth = AVSpeechSynthesizer()
+        var frames = 0
+        var done = false
+        synth.write(utterance) { buffer in
+            if let pcm = buffer as? AVAudioPCMBuffer {
+                if pcm.frameLength == 0 { done = true } else { frames += Int(pcm.frameLength) }
+            }
+        }
+        let deadline = Date().addingTimeInterval(15)
+        while !done && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        return frames
+    }
+
+    /// Synthesises a phrase to a file and transcribes it on-device.
+    private static func transcribeSpoken(_ phrase: String, in dir: URL) -> String? {
+        guard let utterance = SpeechSynthesizerService.makeUtterance(phrase, voiceID: "", languageID: "en-US", rate: 0.45),
+              let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable else { return nil }
+        let url = dir.appendingPathComponent("phrase.caf")
+        let synth = AVSpeechSynthesizer()
+        var file: AVAudioFile?
+        var done = false
+        synth.write(utterance) { buffer in
+            guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+            if pcm.frameLength == 0 { done = true; return }
+            if file == nil { file = try? AVAudioFile(forWriting: url, settings: pcm.format.settings) }
+            try? file?.write(from: pcm)
+        }
+        var deadline = Date().addingTimeInterval(15)
+        while !done && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        file = nil
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        var text: String?
+        var finished = false
+        let task = recognizer.recognitionTask(with: request) { result, error in
+            if let result, result.isFinal { text = result.bestTranscription.formattedString; finished = true }
+            if error != nil { finished = true }
+        }
+        deadline = Date().addingTimeInterval(20)
+        while !finished && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        task.cancel()
+        return text
+    }
+
+    /// Sends a real ⌘V key event through the main menu into an NSSecureTextField.
+    /// The user's clipboard is saved first and restored afterwards.
+    private static func checkPaste() {
+        let pb = NSPasteboard.general
+        let saved: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        }
+        defer {
+            pb.clearContents()
+            if !saved.isEmpty { pb.writeObjects(saved) }
+        }
+
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        MainMenu.install()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 60), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        let field = NSSecureTextField(frame: NSRect(x: 10, y: 10, width: 280, height: 24))
+        window.contentView?.addSubview(field)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(field)
+
+        pb.clearContents()
+        pb.setString("sk-ant-selftest-0000", forType: .string)
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                     windowNumber: window.windowNumber, context: nil, characters: "v",
+                                     charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9)!
+        // 1) The Edit menu maps ⌘V to paste: (this is how AppKit routes it in an active app).
+        let pasteItem = NSApp.mainMenu?.items.compactMap(\.submenu).flatMap(\.items).first {
+            $0.keyEquivalent == "v" && $0.keyEquivalentModifierMask == .command
+        }
+        check("edit: Edit menu maps ⌘V to Paste", pasteItem?.action == #selector(NSText.paste(_:)),
+              pasteItem.map { "\($0.title) → \($0.action.map(NSStringFromSelector) ?? "nil")" } ?? "missing")
+        // 2) That action, delivered to the focused secure field (the key window's first responder), pastes.
+        let delivered = pasteItem?.action.map { NSApp.sendAction($0, to: window.firstResponder, from: pasteItem) } ?? false
+        check("edit: Paste action fills the secure API-key style field",
+              delivered && field.stringValue == "sk-ant-selftest-0000", field.stringValue.isEmpty ? "empty" : "pasted")
+
+        field.stringValue = ""
+        let viaPanel = MainMenu.handleEditShortcut(event, in: window)
+        check("edit: panel fallback also pastes", viaPanel && field.stringValue == "sk-ant-selftest-0000")
+        window.orderOut(nil)
     }
 }

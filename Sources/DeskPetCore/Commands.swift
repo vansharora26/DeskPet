@@ -33,6 +33,10 @@ public enum AppCommand: Equatable, Sendable {
     case showTasks(TaskFilter?)
     case showStats(StatsPeriod)
     case summarizeFocus(StatsPeriod)
+    /// "What's my total?" — today's water so far.
+    case waterTotal
+    /// "How long is left?" — the active timer.
+    case timerStatus
     case configureReminder(kind: ReminderKind, enabled: Bool?, intervalMinutes: Int?)
     case open(Destination)
 
@@ -74,6 +78,8 @@ public enum AppCommand: Equatable, Sendable {
             if let interval { return "\(kind.title) every \(interval) minutes" }
             return "Turn on \(kind.title.lowercased())"
         case .open(let d): return "Open \(d.rawValue.capitalized)"
+        case .waterTotal: return "Show today’s water total"
+        case .timerStatus: return "Show time left on the timer"
         }
     }
 
@@ -186,6 +192,14 @@ public enum CommandParser {
 
     private static func water(_ lower: String) -> AppCommand? {
         if Rx.first(#"^(undo|remove|delete)\s+(the\s+)?(last\s+)?(water|drink|glass)"#, in: lower) != nil { return .undoWater }
+        // Spoken style: "I've had 300 ml", "just drank half a litre" — a drinking verb plus a volume.
+        // Other drinks are deliberately not logged as water.
+        if Rx.first(#"\b(had|drank|drunk|drink|sipped|finished)\b"#, in: lower) != nil,
+           Rx.first(#"\d\s*(ml|millilit|l\b|lit(er|re))"#, in: lower) != nil,
+           Rx.first(#"\b(coffee|tea|juice|soda|beer|wine|milk|cola|smoothie|alcohol|how|what|should)\b|\?$"#, in: lower) == nil,
+           let ml = amount(lower) {
+            return .logWater(ml: ml)
+        }
         guard Rx.first(#"\b(water|drank|drink|hydrat\w*|glass|bottle|sip)\b"#, in: lower) != nil,
               Rx.first(#"\b(goal|target|every|remind|how much|reminders?)\b|\?$"#, in: lower) == nil else { return nil }
         // Accept short imperative forms; leave questions and long sentences to the AI.
@@ -260,6 +274,15 @@ public enum CommandParser {
     // MARK: Queries & navigation
 
     private static func queries(_ lower: String) -> AppCommand? {
+        if Rx.first(#"\b(time|minutes?)\s+(is\s+)?(left|remaining)\b|\bhow long (is )?left\b|\btimer status\b"#, in: lower) != nil {
+            return .timerStatus
+        }
+        if Rx.first(#"\b(water|drunk|drank|hydration)\b"#, in: lower) != nil,
+           Rx.first(#"\b(total|so far|how much|how many)\b"#, in: lower) != nil,
+           Rx.first(#"\b(i|my|today|i'?ve)\b"#, in: lower) != nil,
+           Rx.first(#"\b(week|weekly|should|could|ought|need to|recommend\w*|healthy|per day|a day)\b"#, in: lower) == nil {
+            return .waterTotal
+        }
         let mentionsWeek = Rx.first(#"\b(this week|weekly|past week|last 7 days|week)\b"#, in: lower) != nil
         if Rx.first(#"\b(focus|pomodoro)\b"#, in: lower) != nil,
            Rx.first(#"\b(summar\w*|how (much|many|long)|sessions|stats|history)\b"#, in: lower) != nil {
@@ -276,6 +299,7 @@ public enum CommandParser {
         if Rx.first(#"^what'?s due( today)?$"#, in: lower) != nil { return .showTasks(.today) }
         if Rx.first(#"\b(progress|stats|statistics|summary|how am i doing|how'?s my day|how much water)\b"#, in: lower) != nil,
            Rx.first(#"\b(my|i|i'?ve|me|today|today'?s|this week)\b|^(show\s+)?(progress|stats|summary)$"#, in: lower) != nil,
+           Rx.first(#"\b(should|could|ought|recommend\w*|healthy|per day)\b"#, in: lower) == nil,
            lower.split(separator: " ").count <= 8 {
             return .showStats(mentionsWeek ? .week : .today)
         }

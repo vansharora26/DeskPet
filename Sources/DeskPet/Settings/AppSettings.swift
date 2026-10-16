@@ -15,6 +15,19 @@ enum PetSize: String, CaseIterable, Identifiable {
     }
 }
 
+/// When the pet reads replies aloud.
+enum SpokenReplies: String, CaseIterable, Identifiable {
+    case whenISpeak, always, never
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .whenISpeak: return "When I talk to it"
+        case .always: return "Always"
+        case .never: return "Never (text only)"
+        }
+    }
+}
+
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
@@ -60,6 +73,13 @@ final class AppSettings: ObservableObject {
         static let aiDataAccess = "aiDataAccess"
         static let aiProxyURL = "aiProxyURL"
         static let seenV2 = "hasSeenDeskPet2Tour"
+        static let voiceInput = "voiceInputEnabled"
+        static let spokenReplies = "spokenReplies"
+        static let voiceMuted = "voiceMuted"
+        static let voiceID = "ttsVoiceIdentifier"
+        static let speechRate = "ttsRate"
+        static let recognitionLocale = "recognitionLocale"
+        static let onDeviceOnly = "onDeviceRecognitionOnly"
     }
 
     @Published var soundEnabled: Bool { didSet { defaults.set(soundEnabled, forKey: Key.sound) } }
@@ -78,6 +98,18 @@ final class AppSettings: ObservableObject {
     /// Optional backend proxy that holds the API key server-side (production setup).
     @Published var aiProxyURL: String { didSet { defaults.set(aiProxyURL, forKey: Key.aiProxyURL) } }
     @Published var hasSeenV2Tour: Bool { didSet { defaults.set(hasSeenV2Tour, forKey: Key.seenV2) } }
+    /// Master switch for push-to-talk (off = text-only conversation).
+    @Published var voiceInputEnabled: Bool { didSet { defaults.set(voiceInputEnabled, forKey: Key.voiceInput) } }
+    @Published var spokenReplies: SpokenReplies { didSet { defaults.set(spokenReplies.rawValue, forKey: Key.spokenReplies) } }
+    /// Quick mute from the conversation window (overrides spoken replies).
+    @Published var voiceMuted: Bool { didSet { defaults.set(voiceMuted, forKey: Key.voiceMuted) } }
+    /// AVSpeechSynthesisVoice identifier; empty = best available voice for the language.
+    @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: Key.voiceID) } }
+    /// 0…1 relative speed (mapped onto the synthesizer's range).
+    @Published var speechRate: Double { didSet { defaults.set(speechRate, forKey: Key.speechRate) } }
+    @Published var recognitionLocale: String { didSet { defaults.set(recognitionLocale, forKey: Key.recognitionLocale) } }
+    /// Keep speech recognition on this Mac (no audio sent to Apple).
+    @Published var onDeviceRecognitionOnly: Bool { didSet { defaults.set(onDeviceRecognitionOnly, forKey: Key.onDeviceOnly) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -94,6 +126,13 @@ final class AppSettings: ObservableObject {
             Key.aiDataAccess: AIDataAccess.ask.rawValue,
             Key.aiProxyURL: "",
             Key.seenV2: false,
+            Key.voiceInput: true,
+            Key.spokenReplies: SpokenReplies.whenISpeak.rawValue,
+            Key.voiceMuted: false,
+            Key.voiceID: "",
+            Key.speechRate: 0.5,
+            Key.recognitionLocale: Locale.current.identifier,
+            Key.onDeviceOnly: true,
         ])
         soundEnabled = defaults.bool(forKey: Key.sound)
         animationsEnabled = defaults.bool(forKey: Key.animations)
@@ -107,13 +146,22 @@ final class AppSettings: ObservableObject {
         aiDataAccess = AIDataAccess(rawValue: defaults.string(forKey: Key.aiDataAccess) ?? "") ?? .ask
         aiProxyURL = defaults.string(forKey: Key.aiProxyURL) ?? ""
         hasSeenV2Tour = defaults.bool(forKey: Key.seenV2)
+        voiceInputEnabled = defaults.bool(forKey: Key.voiceInput)
+        spokenReplies = SpokenReplies(rawValue: defaults.string(forKey: Key.spokenReplies) ?? "") ?? .whenISpeak
+        voiceMuted = defaults.bool(forKey: Key.voiceMuted)
+        voiceIdentifier = defaults.string(forKey: Key.voiceID) ?? ""
+        speechRate = min(1, max(0, defaults.double(forKey: Key.speechRate)))
+        recognitionLocale = defaults.string(forKey: Key.recognitionLocale) ?? Locale.current.identifier
+        onDeviceRecognitionOnly = defaults.bool(forKey: Key.onDeviceOnly)
     }
 
     /// Removes every DeskPet preference (used by "Delete all data").
     func resetAll() {
         if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         for key in [Key.sound, Key.animations, Key.chatty, Key.size, Key.welcomed, Key.visible, Key.origin,
-                    Key.systemNotifications, Key.appearance, Key.aiModel, Key.aiDataAccess, Key.aiProxyURL, Key.seenV2] {
+                    Key.systemNotifications, Key.appearance, Key.aiModel, Key.aiDataAccess, Key.aiProxyURL, Key.seenV2,
+                    Key.voiceInput, Key.spokenReplies, Key.voiceMuted, Key.voiceID, Key.speechRate,
+                    Key.recognitionLocale, Key.onDeviceOnly] {
             defaults.removeObject(forKey: key)
         }
     }

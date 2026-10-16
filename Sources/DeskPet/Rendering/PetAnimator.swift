@@ -6,6 +6,8 @@ import Foundation
 /// a running focus timer, a running break, or a hydration reminder on screen.
 enum PetMode: Equatable {
     case none, focused, resting, thirsty
+    /// Voice conversation states (from the real mic / AI / synthesizer state).
+    case listening, thinking, speaking
 }
 
 /// One rendered frame of the pet: sprite pose plus whole-body motion.
@@ -106,6 +108,22 @@ enum PetAnimator {
                 f.pose.tailFrame = Int(t / 1.0) % 2
                 f.pose.eyes = isBlinking(t) ? .blink : .open
                 f.pose.mouthOpen = true
+                return f
+            case .listening:
+                // All ears: wide eyes, rosy cheeks, tail held still, a tiny attentive lean.
+                f.pose.eyes = isBlinking(t) ? .blink : .open
+                f.pose.blush = true
+                f.pose.tailFrame = 0
+                f.hop = input.animate ? 0.5 + sin(t * 4) * 0.5 : 0
+                return f
+            case .thinking:
+                f.pose.eyes = isBlinking(t) ? .blink : .lookUp
+                f.pose.tailFrame = Int(t / 0.9) % 2
+                return f
+            case .speaking:
+                f.pose.eyes = isBlinking(t) ? .blink : .open
+                f.pose.mouthOpen = input.animate ? Int(t / 0.13) % 3 != 2 : true
+                f.pose.tailFrame = Int(t / 0.5) % 2
                 return f
             case .none:
                 break

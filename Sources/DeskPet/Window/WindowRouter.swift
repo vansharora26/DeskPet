@@ -24,6 +24,11 @@ final class InputPanel: NSPanel, NSWindowDelegate {
 
     override var canBecomeKey: Bool { true }
 
+    // This panel can be key while DeskPet isn't the active app; handle edit shortcuts directly.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        MainMenu.handleEditShortcut(event, in: self) || super.performKeyEquivalent(with: event)
+    }
+
     func windowDidResignKey(_ notification: Notification) { close() }
     func windowWillClose(_ notification: Notification) { onClose() }
 
@@ -52,6 +57,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     private var capturePanel: InputPanel?
     private var launcherPanel: InputPanel?
     private var settingsWindow: NSWindow?
+    private var conversationWindow: NSWindow?
+    /// Builds the conversation content (it needs the voice layer, owned by the app delegate).
+    var makeConversationView: () -> AnyView = { AnyView(EmptyView()) }
+    /// The pet window's frame, so the conversation opens beside the cat.
+    var petFrame: () -> NSRect? = { nil }
     var makeSettingsView: () -> AnyView = { AnyView(EmptyView()) }
     var onKeyboardMode: () -> Void = {}
 
@@ -110,6 +120,10 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         guard let w = notification.object as? NSWindow else { return }
         if w === hubWindow { hubWindow = nil }
         if w === settingsWindow { settingsWindow = nil }
+        if w === conversationWindow {
+            conversationWindow = nil
+            onConversationClosed()
+        }
     }
 
     /// Opens an item from the launcher: tasks/notes tab, filtered to it.
@@ -117,6 +131,51 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         hubState.showNotes = !item.isTask
         hubState.search = item.title
         showHub(.tasks)
+    }
+
+    // MARK: Conversation
+
+    var onConversationClosed: () -> Void = {}
+    var isConversationOpen: Bool { conversationWindow?.isVisible ?? false }
+
+    /// Small floating window next to the pet for talking/typing to it.
+    func showConversation() {
+        if conversationWindow == nil {
+            let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 480),
+                            styleMask: [.titled, .closable, .resizable, .utilityWindow, .fullSizeContentView],
+                            backing: .buffered, defer: false)
+            w.contentView = NSHostingView(rootView: makeConversationView())
+            w.title = "Talk to \(pet.name)"
+            w.titlebarAppearsTransparent = true
+            w.isFloatingPanel = true
+            w.hidesOnDeactivate = false
+            w.becomesKeyOnlyIfNeeded = false
+            w.isReleasedWhenClosed = false
+            w.minSize = NSSize(width: 320, height: 380)
+            w.collectionBehavior = [.fullScreenAuxiliary]
+            w.delegate = self
+            place(w)
+            conversationWindow = w
+        }
+        NSApp.activate()
+        conversationWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func closeConversation() { conversationWindow?.close() }
+
+    /// Beside the pet (left if there's room, else right), on the same screen.
+    private func place(_ w: NSWindow) {
+        guard let pet = petFrame(),
+              let screen = NSScreen.screens.first(where: { $0.frame.intersects(pet) }) ?? NSScreen.main else {
+            w.center(); return
+        }
+        let vf = screen.visibleFrame
+        let size = w.frame.size
+        var x = pet.minX - size.width + 20
+        if x < vf.minX { x = pet.maxX - 20 }
+        x = min(max(x, vf.minX), vf.maxX - size.width)
+        let y = min(max(pet.minY, vf.minY), vf.maxY - size.height)
+        w.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     // MARK: Settings

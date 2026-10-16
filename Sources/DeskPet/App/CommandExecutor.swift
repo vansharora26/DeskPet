@@ -171,6 +171,28 @@ struct CommandExecutor {
 
         case .open(let destination):
             return CommandResult(style: .info, message: "Opening \(destination.rawValue)", destination: destination)
+
+        case .waterTotal:
+            let total = model.todayWaterML
+            let target = model.hydrationSettings.dailyTargetML
+            let message: String
+            if total == 0 {
+                message = "No water logged yet today. Your goal is \(AppCommand.formatML(target))."
+            } else if total >= target {
+                message = "You’ve had \(AppCommand.formatML(total)) today — goal of \(AppCommand.formatML(target)) reached!"
+            } else {
+                message = "You’ve had \(AppCommand.formatML(total)) today, \(AppCommand.formatML(target - total)) to go to your \(AppCommand.formatML(target)) goal."
+            }
+            return CommandResult(style: .info, message: message, destination: .water)
+
+        case .timerStatus:
+            guard let t = model.focusTimerState else {
+                return CommandResult(style: .info, message: "No timer is running.", destination: .focus)
+            }
+            let left = Self.spokenDuration(t.remaining(at: Date()))
+            let what = t.phase == .focus ? "focus session" : "break"
+            return CommandResult(style: .info, message: t.isRunning ? "\(left) left in your \(what)." : "Your \(what) is paused with \(left) left.",
+                                 destination: .focus)
         }
     }
 
@@ -231,6 +253,15 @@ struct CommandExecutor {
 
     private func busyMessage(_ t: FocusTimer) -> String {
         "A \(t.phase.title.lowercased()) timer is already active (\(Self.clock(t.remaining(at: Date()))) left). Stop or skip it first."
+    }
+
+    /// "18 minutes", "1 minute 30 seconds", "45 seconds" — reads well aloud.
+    static func spokenDuration(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds.rounded(.up))
+        if s < 60 { return "\(s) second\(s == 1 ? "" : "s")" }
+        let m = s / 60, rem = s % 60
+        let mins = "\(m) minute\(m == 1 ? "" : "s")"
+        return m < 5 && rem >= 10 ? "\(mins) \(rem) seconds" : mins
     }
 
     static func clock(_ seconds: TimeInterval) -> String {
