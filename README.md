@@ -23,6 +23,20 @@ scripts/test.sh                          # 95 unit tests (core logic, Focus Worl
 .build/release/DeskPet --export-previews ./previews   # renders every pet state to PNG
 ```
 
+### Releasing
+
+`scripts/release.sh` builds, signs with a Developer ID (hardened runtime),
+notarizes with Apple, staples the ticket, and writes `dist/DeskPet-<version>.zip`.
+The version comes from `VERSION` in `scripts/build-app.sh`. One-time setup:
+
+1. Install a **Developer ID Application** certificate (plus Apple's
+   *Developer ID Certification Authority G2* intermediate) in your login keychain.
+2. Save notary credentials (prompts for an app-specific password):
+   `xcrun notarytool store-credentials DeskPet-notary --apple-id <you@example.com> --team-id <TEAMID>`
+
+The script checks both before building. If the network drops while Apple is
+processing, it keeps retrying the same submission rather than re-uploading.
+
 ## What it does
 
 | Area | Highlights |
@@ -252,8 +266,9 @@ Reliability notes:
 
 ## Known limitations
 
-* Ad-hoc signed, not notarized. Other Macs will show a Gatekeeper warning until
-  the app is signed with a Developer ID.
+* `scripts/build-app.sh` builds are ad-hoc signed for local use; use
+  `scripts/release.sh` for a notarized build that opens cleanly on other Macs.
+* Release builds are Apple Silicon (arm64) only.
 * macOS notifications and Open at Login require running the
   `.app` (not `swift run`). In-pet reminders always work.
 * Reminders only fire while DeskPet is running.
