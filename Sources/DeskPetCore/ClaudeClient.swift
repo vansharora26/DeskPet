@@ -80,6 +80,39 @@ public struct ClaudeClient {
 
     public var isConfigured: Bool { config.proxyURL != nil || !(config.apiKey ?? "").isEmpty }
 
+    // MARK: Proxy URL rules
+
+    /// Why a proxy URL can't be used, or nil if it's fine (or empty). A proxy URL
+    /// must never carry a secret: it's saved in preferences, not the Keychain.
+    public static func proxyURLProblem(_ raw: String) -> String? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        if s.range(of: "sk-ant", options: .caseInsensitive) != nil {
+            return "This looks like it contains an API key. Put the key on your server, or in the API key field above, never in the URL."
+        }
+        guard let url = URL(string: s), let host = url.host, !host.isEmpty else {
+            return "Enter a full URL, like https://your-backend.example.com/v1/messages."
+        }
+        if url.user != nil || url.password != nil {
+            return "Remove the username/password from the URL; your server should authenticate DeskPet another way."
+        }
+        if url.query != nil || url.fragment != nil {
+            return "Remove the ?… part. Secrets must not go in the URL, because it’s stored in preferences, not the Keychain."
+        }
+        let local = host == "localhost" || host == "127.0.0.1"
+        guard url.scheme == "https" || (local && url.scheme == "http") else {
+            return "Use https:// (plain http is only allowed for localhost)."
+        }
+        return nil
+    }
+
+    /// The usable proxy URL, or nil if it's empty or not allowed.
+    public static func proxyURL(from raw: String) -> URL? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, proxyURLProblem(s) == nil else { return nil }
+        return URL(string: s)
+    }
+
     /// POST /v1/messages with retries for transient failures.
     public func createMessage(_ body: [String: JSONValue]) async throws -> JSONValue {
         guard isConfigured else { throw AIError.notConfigured }

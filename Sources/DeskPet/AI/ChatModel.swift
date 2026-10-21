@@ -103,6 +103,8 @@ final class ChatModel: ObservableObject {
 
     /// Forces on-device-only behaviour (used by the self-test so it never calls the network or uses the user's key).
     var forceLocalOnly = false
+    /// Nil when AI chat may be used; otherwise why not (trial ended). Local commands are never gated.
+    var aiLockedReason: () -> String? = { nil }
 
     var aiState: AIState {
         if forceLocalOnly { return .notConfigured }
@@ -110,11 +112,7 @@ final class ChatModel: ObservableObject {
         return KeychainStore.hasAPIKey ? .direct(model: settings.aiModel) : .notConfigured
     }
 
-    private var proxyURL: URL? {
-        let s = settings.aiProxyURL.trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: s), url.scheme == "https" || url.host == "localhost" || url.host == "127.0.0.1" else { return nil }
-        return url
-    }
+    private var proxyURL: URL? { ClaudeClient.proxyURL(from: settings.aiProxyURL) }
 
     private var client: ClaudeClient {
         ClaudeClient(config: .init(model: settings.aiModel, apiKey: KeychainStore.loadAPIKey(), proxyURL: proxyURL))
@@ -154,7 +152,14 @@ final class ChatModel: ObservableObject {
             runLocal(command, said: text)
             return
         }
-        // 3. No AI configured: explain, keep local features working.
+        // 3. AI chat needs the trial or a license (local commands above never do).
+        if let reason = aiLockedReason() {
+            reply(reason + " Commands like “log 300 ml” or “start a focus session” still work.",
+                  spoken: reason)
+            persist()
+            return
+        }
+        // 4. No AI configured: explain, keep local features working.
         guard aiState.isReady else {
             reply("""
                 I can’t answer general questions until AI is connected (Settings › AI). \
@@ -164,7 +169,7 @@ final class ChatModel: ObservableObject {
             persist()
             return
         }
-        // 4. Ask Claude.
+        // 5. Ask Claude.
         appendUserTurn(text)
         startLoop()
     }

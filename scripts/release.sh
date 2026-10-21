@@ -14,7 +14,11 @@
 #   DESKPET_SIGN_IDENTITY   certificate name or SHA-1 (default: the only
 #                           "Developer ID Application" identity found)
 #   DESKPET_NOTARY_PROFILE  notarytool keychain profile (default: DeskPet-notary)
+#   DESKPET_DODO_ENV        license keys the release accepts (default: live_mode)
 set -euo pipefail
+
+# Releases are for customers, so they accept real (live) license keys by default.
+export DESKPET_DODO_ENV="${DESKPET_DODO_ENV:-live_mode}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/DeskPet.app"
@@ -59,6 +63,7 @@ if [[ ${#problems[@]} -gt 0 ]]; then
 fi
 echo "    Signing as: $IDENTITY"
 echo "    Notary profile: $PROFILE"
+echo "    License keys: $DESKPET_DODO_ENV"
 
 # --- Build ----------------------------------------------------------------
 "$ROOT/scripts/build-app.sh" release

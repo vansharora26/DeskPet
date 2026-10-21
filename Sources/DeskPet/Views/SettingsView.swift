@@ -3,7 +3,7 @@ import DeskPetCore
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, pet, water, focus, worlds, voice, shortcuts, ai, privacy
+    case general, pet, water, focus, worlds, voice, shortcuts, ai, license, privacy
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .worlds: return "Focus Worlds"
         case .shortcuts: return "Shortcuts"
         case .ai: return "AI"
+        case .license: return "License"
         case .privacy: return "Privacy & Data"
         }
     }
@@ -28,6 +29,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .worlds: return "mountain.2"
         case .shortcuts: return "command"
         case .ai: return "sparkles"
+        case .license: return "checkmark.seal"
         case .privacy: return "lock.shield"
         }
     }
@@ -51,6 +53,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var model: AppModel
     @ObservedObject var loginItem: LoginItemManager
+    @ObservedObject var license: LicenseManager
     @ObservedObject var notifications: NotificationManager
     @ObservedObject var hotkeys: HotKeyManager
     @ObservedObject var chat: ChatModel
@@ -75,6 +78,8 @@ struct SettingsView: View {
                 .tabItem { Label(SettingsTab.shortcuts.title, systemImage: SettingsTab.shortcuts.symbol) }.tag(SettingsTab.shortcuts)
             AISettings(settings: settings, chat: chat)
                 .tabItem { Label(SettingsTab.ai.title, systemImage: SettingsTab.ai.symbol) }.tag(SettingsTab.ai)
+            LicenseSettings(license: license)
+                .tabItem { Label(SettingsTab.license.title, systemImage: SettingsTab.license.symbol) }.tag(SettingsTab.license)
             PrivacySettings(model: model, actions: actions)
                 .tabItem { Label(SettingsTab.privacy.title, systemImage: SettingsTab.privacy.symbol) }.tag(SettingsTab.privacy)
         }
@@ -676,6 +681,9 @@ private struct AISettings: View {
             Section("Production: backend proxy (optional)") {
                 TextField("https://your-backend.example.com/v1/messages", text: $settings.aiProxyURL)
                     .textFieldStyle(.roundedBorder)
+                if let problem = ClaudeClient.proxyURLProblem(settings.aiProxyURL) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill").font(DP.caption).foregroundStyle(DP.danger)
+                }
                 Hint(text: "If set, DeskPet sends requests to this HTTPS endpoint instead, without any key. Your server adds the key and forwards to the Claude API. See README › AI setup.")
             }
             Section("What the AI can see") {
@@ -720,9 +728,8 @@ private struct AISettings: View {
     private func test() {
         testing = true
         testResult = nil
-        let url = URL(string: settings.aiProxyURL.trimmingCharacters(in: .whitespaces))
         let client = ClaudeClient(config: .init(model: settings.aiModel, apiKey: KeychainStore.loadAPIKey(),
-                                                proxyURL: (url?.scheme == "https" || url?.host == "localhost") ? url : nil))
+                                                proxyURL: ClaudeClient.proxyURL(from: settings.aiProxyURL)))
         var body: [String: JSONValue] = ["model": .string(settings.aiModel), "max_tokens": 64,
                                          "messages": [["role": "user", "content": "Reply with the single word: ready"]]]
         if settings.aiModel != "claude-haiku-4-5" { body["output_config"] = ["effort": "low"] }
@@ -750,7 +757,7 @@ private struct PrivacySettings: View {
             Section("Your data stays on this Mac") {
                 Text("Notes, tasks, water and focus logs, preferences and your pet are stored locally in Application Support. DeskPet has no analytics, no tracking and no account.")
                     .font(DP.body)
-                Hint(text: "No screenshots, no keystroke logging, no clipboard monitoring. The only network requests are the AI chats you send (if configured).")
+                Hint(text: "No screenshots, no keystroke logging, no clipboard monitoring. The only network requests are the AI chats you send (if configured) and license checks for an activated key (Settings › License).")
                 Button("Show data folder in Finder", action: actions.revealData)
                 if let error = model.lastSaveError {
                     Label(error, systemImage: "exclamationmark.triangle.fill").font(DP.caption).foregroundStyle(DP.danger)
@@ -762,7 +769,7 @@ private struct PrivacySettings: View {
                 Button("Export my data…", action: actions.export)
             }
             Section("Delete") {
-                Text("Erase all notes, tasks, logs, progress, chat history, preferences and the saved API key. Your pet starts fresh.")
+                Text("Erase all notes, tasks, logs, progress, chat history, preferences and the saved API key. Your pet starts fresh. Your license stays activated; deactivate it in Settings › License first if you’re moving to another Mac.")
                     .font(DP.body)
                 Button("Delete all DeskPet data…", role: .destructive) { confirmDelete = true }
             }
@@ -772,6 +779,95 @@ private struct PrivacySettings: View {
             Button("Delete everything", role: .destructive, action: actions.deleteAll)
         } message: {
             Text("This can’t be undone. Consider exporting first.")
+        }
+    }
+}
+
+// MARK: - License
+
+private struct LicenseSettings: View {
+    @ObservedObject var license: LicenseManager
+    @State private var keyInput = ""
+    @State private var confirmDeactivate = false
+
+    var body: some View {
+        Form {
+            Section("Status") {
+                statusRow
+                if license.environment == .testMode {
+                    Hint(text: "Test mode: only Dodo Payments test keys work in this build.")
+                }
+            }
+            if let r = license.record {
+                Section("This Mac") {
+                    LabeledContent("Key", value: r.maskedKey)
+                    LabeledContent("Activated", value: r.activatedAt.formatted(date: .abbreviated, time: .omitted))
+                    LabeledContent("Last checked", value: r.lastValidatedAt.formatted(date: .abbreviated, time: .shortened))
+                    HStack {
+                        Button("Check now") { Task { await license.revalidateIfNeeded(force: true) } }
+                        Spacer()
+                        Button("Deactivate on this Mac…", role: .destructive) { confirmDeactivate = true }
+                    }
+                    .disabled(license.isWorking)
+                }
+            } else {
+                Section("Enter your license key") {
+                    HStack {
+                        TextField("Paste the key from your purchase email", text: $keyInput)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit(activate)
+                        Button {
+                            if let s = NSPasteboard.general.string(forType: .string) { keyInput = LicensePolicy.normalizedKey(s) }
+                        } label: { Label("Paste", systemImage: "doc.on.clipboard") }
+                        .help("Paste the key from the clipboard")
+                        Button(license.isWorking ? "Activating…" : "Activate", action: activate)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(license.isWorking || keyInput.trimmingCharacters(in: .whitespaces).count < 8)
+                    }
+                    HStack {
+                        Text("Don’t have one yet?").font(DP.body)
+                        Button("Buy DeskPet…") { license.openBuyPage() }
+                    }
+                }
+            }
+            if let s = license.status {
+                Label(s.text, systemImage: s.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(DP.caption).foregroundStyle(s.ok ? DP.mint : DP.danger)
+            }
+            Section("What’s included") {
+                Text("Free forever: your pet, water tracking, the focus timer, notes, tasks and reminders.").font(DP.body)
+                Text("DeskPet Full (one-time purchase): \(PremiumFeature.allCases.map(\.title).joined(separator: ", ")).").font(DP.body)
+                Hint(text: "Activating sends your key and this Mac’s name (“\(LicenseManager.deviceName)”) to Dodo Payments, DeskPet’s payment provider. After that, the key is re-checked about once a week; it keeps working offline for up to 30 days. The key is stored in your macOS Keychain.")
+            }
+        }
+        .formStyle(.grouped)
+        .confirmationDialog("Deactivate DeskPet on this Mac?", isPresented: $confirmDeactivate) {
+            Button("Deactivate", role: .destructive) { Task { await license.deactivate() } }
+        } message: {
+            Text("This frees the key so you can use it on another Mac. Focus Worlds, AI chat and voice will lock here until you activate again.")
+        }
+    }
+
+    @ViewBuilder private var statusRow: some View {
+        switch license.access {
+        case .licensed:
+            Label("DeskPet Full: thank you!", systemImage: "checkmark.seal.fill").foregroundStyle(DP.mint)
+        case .needsCheck:
+            Label("License needs a check: connect to the internet and click Check now.", systemImage: "wifi.exclamationmark")
+                .foregroundStyle(DP.danger)
+        case .trial(let days):
+            Label(days == 1 ? "Free trial: last day" : "Free trial: \(days) days left", systemImage: "hourglass")
+        case .trialEnded:
+            Label("Trial ended. Focus Worlds, AI chat and voice need a license.", systemImage: "lock.fill")
+                .foregroundStyle(DP.danger)
+        }
+    }
+
+    private func activate() {
+        let key = keyInput
+        Task {
+            await license.activate(key)
+            if license.record != nil { keyInput = "" }
         }
     }
 }

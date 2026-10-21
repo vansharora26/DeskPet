@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var chat: ChatModel!
     private var voice: VoiceController!
     private var worlds: WorldsController!
+    private var license: LicenseManager!
     private var router: WindowRouter!
     private var behavior: PetBehavior!
     private var scheduler: ReminderScheduler!
@@ -43,6 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voice = VoiceController(chat: chat, settings: settings, pet: pet)
         worlds = WorldsController(model: model, pet: pet, appSettings: settings)
 
+        // Trial & license: gates Focus Worlds, AI chat and voice (everything else is free).
+        license = LicenseManager.fromBundle()
+        chat.aiLockedReason = { [unowned self] in self.license.lockedReason(.aiChat) }
+        voice.lockedReason = { [unowned self] in self.license.lockedReason(.voice) }
+
         // Windows & behaviour
         router = WindowRouter(model: model, chat: chat, pet: pet, settings: settings)
         router.makeSettingsView = { [unowned self] in AnyView(self.settingsView()) }
@@ -63,7 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if hidden { self.petWindow.hide() } else if self.settings.petVisible { self.petWindow.show() }
         }
-        router.openFocusWorld = { [weak self] in self?.worlds.open() }
+        router.openFocusWorld = { [weak self] in self?.openWorld() }
+        license.onLocked = { [weak self] feature in
+            guard let self else { return }
+            self.pet.say(self.license.lockedReason(feature) ?? "")
+            self.router.openSettings(.license)
+        }
+        license.start()
+        nudgeIfTrialEndingSoon()
         offerToResumeWorldSession()
         statusBar = StatusBarController(pet: pet, model: model, actions: menuActions)
 
@@ -136,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openFocus: { [weak self] in self?.router.open(.focus) },
             openChat: { [weak self] in self?.router.showConversation() },
             openCapture: { [weak self] in self?.router.open(.capture) },
-            enterWorld: { [weak self] in self?.worlds.open() },
+            enterWorld: { [weak self] in self?.openWorld() },
             moreMenu: { [weak self] in
                 guard let self else { return nil }
                 return PetMenu.make(pet: self.pet, model: self.model, actions: self.menuActions)
@@ -168,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPetVisible: { [weak self] in self?.petWindow.isVisible ?? false },
             open: { [weak self] d in self?.router.open(d) },
             talk: { [weak self] in self?.router.showConversation() },
-            enterWorld: { [weak self] in self?.worlds.open() },
+            enterWorld: { [weak self] in self?.openWorld() },
             openSettings: { [weak self] t in self?.router.openSettings(t) },
             openWelcome: { [weak self] in self?.showWelcome(isUpgrade: false) },
             resetPosition: { [weak self] in
@@ -198,8 +211,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             message: "Your \(w.title) session is still \(t.isRunning ? "running" : "paused").",
                             actions: [.init(title: "Return to it", isPrimary: true) { [weak self] in
                                 self?.pet.clearCallout(kind: .focusPhase)
-                                self?.worlds.open(w)
+                                self?.openWorld(w)
                             }]))
+    }
+
+    /// Every way into Focus Worlds goes through here (trial / license gate).
+    private func openWorld(_ world: FocusWorld? = nil) {
+        guard license.allows(.focusWorlds) else { return }
+        worlds.open(world)
+    }
+
+    /// A gentle reminder in the last 3 days of the trial, at most once a day.
+    private func nudgeIfTrialEndingSoon() {
+        guard case .trial(let days) = license.access, days <= 3 else { return }
+        let today = model.calendar.dayKey(Date())
+        guard UserDefaults.standard.string(forKey: "trialNudgeDay") != today else { return }
+        UserDefaults.standard.set(today, forKey: "trialNudgeDay")
+        let when = days == 1 ? "ends today" : "ends in \(days) days"
+        pet.show(PetCallout(kind: .info, symbol: "sparkles",
+                            message: "Your DeskPet trial \(when). Focus Worlds, AI chat and voice need a license after that.",
+                            actions: [.init(title: "Buy DeskPet", isPrimary: true) { [weak self] in
+                                          self?.pet.clearCallout(kind: .info)
+                                          self?.license.openBuyPage()
+                                      },
+                                      .init(title: "I have a key") { [weak self] in
+                                          self?.pet.clearCallout(kind: .info)
+                                          self?.router.openSettings(.license)
+                                      }]))
     }
 
     // MARK: - Keyboard
@@ -209,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .launcher: router.showLauncher()
         case .capture: router.showCapture()
         case .chat: router.showConversation()
-        case .focusWorld: worlds.isOpen ? worlds.close() : worlds.open()
+        case .focusWorld: worlds.isOpen ? worlds.close() : openWorld()
         case .pushToTalk:
             router.showConversation()
             voice.pressBegan()
@@ -272,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func settingsView() -> some View {
         SettingsView(
-            state: router.settingsState, pet: pet, settings: settings, model: model, loginItem: loginItem,
+            state: router.settingsState, pet: pet, settings: settings, model: model, loginItem: loginItem, license: license,
             notifications: notifications, hotkeys: hotkeys, chat: chat, voice: voice,
             actions: SettingsActions(
                 export: { [weak self] in self?.exportData() },

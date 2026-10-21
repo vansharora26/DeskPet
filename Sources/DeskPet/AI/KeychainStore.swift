@@ -48,4 +48,36 @@ enum KeychainStore {
     }
 
     static var hasAPIKey: Bool { loadAPIKey() != nil }
+
+    // MARK: License (separate service so deleting one never touches the other)
+
+    private static let licenseService = "app.deskpet.DeskPet.license"
+
+    private static func licenseQuery(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: licenseService,
+         kSecAttrAccount as String: account]
+    }
+
+    static func saveLicenseData(_ data: Data, account: String) throws {
+        SecItemDelete(licenseQuery(account) as CFDictionary)
+        var add = licenseQuery(account)
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(add as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainError.status(status) }
+    }
+
+    static func loadLicenseData(account: String) -> Data? {
+        var q = licenseQuery(account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
+        return out as? Data
+    }
+
+    static func deleteLicenseData(account: String) {
+        SecItemDelete(licenseQuery(account) as CFDictionary)
+    }
 }

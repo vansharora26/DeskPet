@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import DeskPetCore
 
 enum PetSize: String, CaseIterable, Identifiable {
     case small, medium, large
@@ -96,7 +97,10 @@ final class AppSettings: ObservableObject {
     @Published var aiModel: String { didSet { defaults.set(aiModel, forKey: Key.aiModel) } }
     @Published var aiDataAccess: AIDataAccess { didSet { defaults.set(aiDataAccess.rawValue, forKey: Key.aiDataAccess) } }
     /// Optional backend proxy that holds the API key server-side (production setup).
-    @Published var aiProxyURL: String { didSet { defaults.set(aiProxyURL, forKey: Key.aiProxyURL) } }
+    /// A URL that looks like it carries a secret is never written to preferences.
+    @Published var aiProxyURL: String {
+        didSet { defaults.set(ClaudeClient.proxyURLProblem(aiProxyURL) == nil ? aiProxyURL : "", forKey: Key.aiProxyURL) }
+    }
     @Published var hasSeenV2Tour: Bool { didSet { defaults.set(hasSeenV2Tour, forKey: Key.seenV2) } }
     /// Master switch for push-to-talk (off = text-only conversation).
     @Published var voiceInputEnabled: Bool { didSet { defaults.set(voiceInputEnabled, forKey: Key.voiceInput) } }

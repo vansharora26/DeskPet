@@ -123,6 +123,21 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(again["content"]?.array?[0]["signature"]?.string == "abc+/=")
     }
 
+    @Test func proxyURLNeverCarriesASecret() {
+        #expect(ClaudeClient.proxyURLProblem("") == nil)
+        #expect(ClaudeClient.proxyURL(from: "https://api.example.com/v1/messages")?.host == "api.example.com")
+        #expect(ClaudeClient.proxyURL(from: "http://127.0.0.1:8787/v1/messages") != nil)
+        for bad in ["https://user:pass@api.example.com/v1/messages",
+                    "https://api.example.com/v1/messages?key=abc",
+                    "https://api.example.com/v1/messages#token",
+                    "https://api.example.com/sk-ant-api03-xyz",
+                    "http://api.example.com/v1/messages",
+                    "not a url"] {
+            #expect(ClaudeClient.proxyURLProblem(bad) != nil, "\(bad)")
+            #expect(ClaudeClient.proxyURL(from: bad) == nil, "\(bad)")
+        }
+    }
+
     @Test func retryableClassification() {
         #expect(AIError.rateLimited.isRetryable && AIError.overloaded.isRetryable && AIError.offline.isRetryable)
         #expect(!AIError.unauthorized.isRetryable && !AIError.badRequest("x").isRetryable)

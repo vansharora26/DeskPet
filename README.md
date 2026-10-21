@@ -1,4 +1,4 @@
-# DeskPet 2.2
+# DeskPet 2.3
 
 A pixel-art cat that lives on your Mac desktop — and helps you drink water,
 focus, remember things, and get stuff done. Native Swift + SwiftUI + AppKit,
@@ -16,8 +16,8 @@ open build/DeskPet.app
 Checks:
 
 ```sh
-scripts/test.sh                          # 95 unit tests (core logic, Focus Worlds, conversation, speech text, API client — offline)
-.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, voice, Focus Worlds, audio) in a temp folder
+scripts/test.sh                          # 109 unit tests (core logic, Focus Worlds, conversation, speech text, API + license clients — offline)
+.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, voice, Focus Worlds, audio, license gates) in a temp folder
 .build/release/DeskPet --export-worlds ./shots          # renders every Focus Worlds screen to PNG (offscreen)
 .build/release/DeskPet --worlds-probe deepFocus 15      # runs a live world off-screen so you can measure CPU
 .build/release/DeskPet --export-previews ./previews   # renders every pet state to PNG
@@ -213,14 +213,40 @@ validated (types, ranges, dates in the future…). Stopping a timer or turning
 reminders off asks for confirmation. There is no shell, file or network access
 for the model.
 
+## Trial & license (Dodo Payments)
+
+DeskPet is free to try for **14 days** with everything unlocked. After that, the
+pet, water tracking, the focus timer, notes, tasks and reminders stay **free
+forever**; **Focus Worlds, AI chat and voice** need a one-time license.
+
+* **Buying:** "Buy DeskPet" opens `DPBuyURL` (default https://deskpet.app), whose
+  button links to a Dodo Payments checkout. Dodo handles payment, tax and the
+  receipt, and **emails the license key**.
+* **Activating:** Settings › License → paste the key → Activate. DeskPet calls
+  Dodo's public license endpoints (`/licenses/activate`, `/validate`,
+  `/deactivate`); they need **no API key, so no secret ships in the app**. Sent:
+  the key and this Mac's name. Stored: the key and activation ID, in the Keychain.
+* **Checks:** re-validated about weekly; works offline for 30 days after the last
+  successful check. A revoked or refunded key locks premium features again.
+* **Moving Macs:** Settings › License → Deactivate frees the slot.
+* **Environments:** `scripts/build-app.sh` builds accept Dodo **test** keys
+  (`DESKPET_DODO_ENV=test_mode`); `scripts/release.sh` builds accept **live**
+  keys. A test key never works in a live build.
+
+Dodo setup: create the product (one-time price), add a **License Key**
+entitlement (e.g. 3 activations), and put its payment link
+(`https://checkout.dodopayments.com/buy/pdt_…`) behind the Buy button on the website.
+
 ## Privacy & data
 
 Everything lives in `~/Library/Application Support/DeskPet/`:
 `deskpet-data.json` (habits, notes, tasks, progress), `pet.json`, `chat.json`.
 Preferences are stored in the `app.deskpet.DeskPet` defaults domain, and the
-API key in the Keychain. Settings › Privacy & Data can **export** everything
-(JSON + CSV for water, focus, notes & tasks) or **delete** it all. There are no
-analytics, no accounts, and no network requests unless you use AI chat.
+API key and license in the Keychain. Settings › Privacy & Data can **export** everything
+(JSON + CSV for water, focus, notes & tasks) or **delete** it all (an activated
+license is kept; deactivate it in Settings › License). There are no analytics and
+no accounts. The only network requests are AI chats you send and, once you
+activate a license key, a license check about once a week.
 
 Hydration goals are personal settings, not medical advice. DeskPet only knows
 what you log, and it has no calendar access.

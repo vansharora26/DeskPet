@@ -4,12 +4,19 @@
 #
 #   scripts/build-app.sh            # release build -> build/DeskPet.app
 #   scripts/build-app.sh debug      # debug build
+#
+# Licensing (Dodo Payments):
+#   DESKPET_DODO_ENV   test_mode (default) or live_mode — which keys the app accepts
+#   DESKPET_BUY_URL    where "Buy DeskPet" goes (default https://deskpet.app)
 set -euo pipefail
 
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/DeskPet.app"
-VERSION="2.2.0"
+VERSION="2.3.0"
+DODO_ENV="${DESKPET_DODO_ENV:-test_mode}"
+BUY_URL="${DESKPET_BUY_URL:-https://deskpet.app}"
+[[ "$DODO_ENV" == "test_mode" || "$DODO_ENV" == "live_mode" ]] || { echo "DESKPET_DODO_ENV must be test_mode or live_mode" >&2; exit 1; }
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 cd "$ROOT"
@@ -47,10 +54,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key>                  <true/>
     <key>NSHighResolutionCapable</key>      <true/>
     <key>NSHumanReadableCopyright</key>     <string>DeskPet</string>
+    <key>DPDodoEnvironment</key>            <string>$DODO_ENV</string>
+    <key>DPBuyURL</key>                     <string>$BUY_URL</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>DeskPet listens only while you hold the talk button or push-to-talk shortcut, so your pet can understand what you say.</string>
+    <string>DeskPet uses the microphone only while you hold or tap the talk button (or the push-to-talk shortcut), so you can talk to your pet instead of typing. It never listens in the background, and DeskPet doesn’t save recordings.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>DeskPet turns what you say into text so your pet can respond. When your Mac supports it, recognition happens on-device.</string>
+    <string>DeskPet turns what you say into text so your pet can understand it and reply. By default this happens entirely on your Mac. Only if you turn off “Keep speech recognition on this Mac” in Settings › Voice may Apple’s speech service process it instead.</string>
 </dict>
 </plist>
 PLIST
@@ -59,5 +68,5 @@ echo "==> Ad-hoc code signing"
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --strict "$APP"
 
-echo "==> Done: $APP"
+echo "==> Done: $APP  (licenses: $DODO_ENV)"
 echo "    Run it with:  open \"$APP\""

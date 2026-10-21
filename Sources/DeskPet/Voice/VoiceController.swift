@@ -25,6 +25,8 @@ final class VoiceController: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var pressStarted: Date?
     private var sleepObserver: NSObjectProtocol?
+    /// Nil when voice input may be used; otherwise why not (trial ended).
+    var lockedReason: () -> String? = { nil }
 
     init(chat: ChatModel, settings: AppSettings, pet: PetViewModel) {
         self.chat = chat
@@ -95,6 +97,10 @@ final class VoiceController: ObservableObject {
             // Second tap in latched mode ends the turn.
             latched = false
             input.stop()
+            return
+        }
+        if let reason = lockedReason() {
+            notice = reason          // the mic is never turned on
             return
         }
         guard voiceInputAvailable else {

@@ -154,6 +154,43 @@ enum SelfTest {
             settings.voiceInputEnabled = false
             voice.pressBegan()
             check("voice: disabling voice input keeps the mic off", voice.input.state == .idle && voice.notice != nil)
+            settings.voiceInputEnabled = true
+
+            // Trial & license gates (in-memory storage: the real Keychain license is never touched).
+            let fresh = LicenseManager(storage: InMemoryLicenseStorage(), environment: .testMode,
+                                       buyURL: URL(string: "https://deskpet.app")!)
+            check("license: new install starts a 14-day trial", fresh.access == .trial(daysLeft: 14)
+                  && PremiumFeature.allCases.allSatisfy { fresh.lockedReason($0) == nil })
+            let ended = LicenseManager(storage: InMemoryLicenseStorage(trialStart: Date().addingTimeInterval(-20 * 86_400)),
+                                       environment: .testMode, buyURL: URL(string: "https://deskpet.app")!)
+            var lockedFeatures: [PremiumFeature] = []
+            ended.onLocked = { lockedFeatures.append($0) }
+            check("license: trial ends after 14 days", ended.access == .trialEnded)
+            check("license: Focus Worlds gate reports the lock", !ended.allows(.focusWorlds) && lockedFeatures == [.focusWorlds])
+            chat.aiLockedReason = { ended.lockedReason(.aiChat) }
+            let waterBefore = model.todayWaterML
+            chat.send("I've had 200 ml of water")
+            check("license: local commands stay free after the trial", model.todayWaterML == waterBefore + 200, last())
+            chat.send("tell me a story about a cat")
+            check("license: AI chat explains the lock instead of answering",
+                  last().contains("trial has ended") && last().contains("Settings › License"), last())
+            voice.lockedReason = { ended.lockedReason(.voice) }
+            voice.pressBegan()
+            check("license: voice gate keeps the mic off", voice.input.state == .idle
+                  && (voice.notice ?? "").contains("trial has ended"), voice.notice ?? "")
+            let validated = Date().addingTimeInterval(-40 * 86_400)
+            let stale = LicenseManager(storage: InMemoryLicenseStorage(
+                                           record: LicenseRecord(key: "TEST-KEY-1234", instanceID: "lki_x", environment: .testMode,
+                                                                 activatedAt: validated, lastValidatedAt: validated),
+                                           trialStart: validated),
+                                       environment: .testMode, buyURL: URL(string: "https://deskpet.app")!)
+            check("license: unconfirmed for 30+ days asks for a check", stale.access == .needsCheck)
+            let wrongEnv = InMemoryLicenseStorage(record: LicenseRecord(key: "TEST-KEY-1234", instanceID: "lki_x", environment: .testMode,
+                                                                        activatedAt: Date(), lastValidatedAt: Date()))
+            let live = LicenseManager(storage: wrongEnv, environment: .liveMode, buyURL: URL(string: "https://deskpet.app")!)
+            check("license: a test key isn't accepted by a live build", live.record == nil && wrongEnv.record == nil)
+            chat.aiLockedReason = { nil }
+            voice.lockedReason = { nil }
 
             // Text-to-speech renders real audio — silently, into a buffer.
             let utterance = SpeechSynthesizerService.makeUtterance("Logged 300 ml · 1.2 L of 2.0 L today 🎉",
