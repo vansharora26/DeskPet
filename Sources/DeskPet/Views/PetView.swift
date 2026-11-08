@@ -9,6 +9,11 @@ struct PetBarActions {
     var openFocus: () -> Void
     var openChat: () -> Void
     var openCapture: () -> Void
+    var screenshot: () -> Void
+    var copyText: () -> Void
+    var pdfTools: () -> Void = {}
+    /// Files dropped onto the cat.
+    var dropFiles: ([URL]) -> Void = { _ in }
     var enterWorld: () -> Void
     var moreMenu: () -> NSMenu?
 }
@@ -54,10 +59,15 @@ struct PetView: View {
                         .transition(animate ? .scale(scale: 0.6, anchor: .bottom).combined(with: .opacity) : .opacity)
                 }
             }
-            .frame(width: layout.windowSize.width - 12,
+            .frame(width: min(layout.windowSize.width - 12, PetLayout.bubbleMaxWidth),
                    height: layout.bubbleAreaHeight(lifted: pet.reaction == .playing || pet.reaction == .celebrating),
                    alignment: .bottom)
-            .padding(.leading, 6)
+            .padding(.leading, ((layout.windowSize.width - min(layout.windowSize.width - 12, PetLayout.bubbleMaxWidth)) / 2).rounded())
+            .offset(x: windowState.isHovered && !windowState.isDragging ? layout.bubbleShift(for: windowState.spread) : 0)
+
+            // Hover spread: labelled pills that fly out from behind the cat.
+            ActionSpread(model: model, windowState: windowState, actions: actions, animate: animate,
+                         shown: windowState.isHovered && !windowState.isDragging)
 
             // Animated cat + props. Rendering only; input is handled below.
             PetStageHost(driver: driver)
@@ -71,7 +81,8 @@ struct PetView: View {
                 onDragChanged: onDragChanged,
                 onDragEnded: onDragEnded,
                 contextMenu: contextMenu,
-                onKey: onKey
+                onKey: onKey,
+                onDropFiles: actions.dropFiles
             )
             .frame(width: layout.catSize.width, height: layout.catSize.height)
             .overlay {
@@ -88,10 +99,7 @@ struct PetView: View {
             .accessibilityAddTraits(.isButton)
 
             Group {
-                if windowState.isHovered && !windowState.isDragging {
-                    ActionBar(model: model, actions: actions)
-                        .transition(.opacity.combined(with: .offset(y: animate ? 6 : 0)))
-                } else if let timer = model.focusTimerState, !windowState.isDragging {
+                if !windowState.isHovered, let timer = model.focusTimerState, !windowState.isDragging {
                     FocusBadge(timer: timer, onTap: actions.openFocus)
                         .transition(.opacity)
                 }
@@ -135,6 +143,10 @@ struct PetStage: View, Equatable {
         case mug(t: TimeInterval)
         case listening(t: TimeInterval)
         case thinking(t: TimeInterval)
+        /// A little lightning bolt bobbing above the head while charging.
+        case charging(t: TimeInterval)
+        /// A blinking red empty battery above the head (critical battery).
+        case lowBattery(t: TimeInterval)
     }
 
     let frame: PetFrame
@@ -145,6 +157,7 @@ struct PetStage: View, Equatable {
     var body: some View {
         ZStack(alignment: .topLeading) {
             CatCanvas(pose: frame.pose, pixel: pixel)
+                .scaleEffect(x: frame.facingLeft ? -1 : 1, y: 1, anchor: UnitPoint(x: 9 / Double(CatSprite.width), y: 0.5))
                 .scaleEffect(x: 1, y: frame.stretch, anchor: .bottom)
                 .offset(x: frame.shake * pixel, y: -frame.hop * pixel)
             propsView
@@ -175,7 +188,7 @@ struct PetStage: View, Equatable {
                 let progress = min(1, local / 1.2)
                 if local > 0 {
                     // Hearts drift up from alternating cheeks, staying clear of the bubble.
-                    PixelImageView(image: PropSprites.heartImage, pixel: p * 0.6)
+                    PropView(kind: .heart, unit: p * 0.6)
                         .offset(x: p * (i % 2 == 0 ? -3.5 + Double(i) * 0.5 : 17.5),
                                 y: p * (top + 6 - progress * 7))
                         .opacity(1 - progress)
@@ -183,13 +196,13 @@ struct PetStage: View, Equatable {
             }
         case .eating(let age):
             let eaten = animate ? min(1, age / PetViewModel.Reaction.eating.duration) : 0.3
-            PixelImageView(image: PropSprites.fishImage, pixel: p * 0.85)
+            PropView(kind: .fish, unit: p * 0.85)
                 .scaleEffect(x: -(1 - eaten * 0.85), y: 1 - eaten * 0.5, anchor: .trailing)
                 .offset(x: -p * 8, y: p * (top + 8.5))
                 .opacity(1 - eaten * 0.7)
         case .playing(let age):
             let bounce = animate ? abs(sin(age * .pi * 2.2 + .pi / 2)) : 0
-            PixelImageView(image: PropSprites.yarnImage, pixel: p * 0.8)
+            PropView(kind: .yarn, unit: p * 0.8)
                 .rotationEffect(.degrees(animate ? age * 360 : 0))
                 .offset(x: -p * (5 + sin(age * 3) * 1.5), y: p * (top + 15 - bounce * 7))
         case .confetti(let age):
@@ -199,11 +212,11 @@ struct PetStage: View, Equatable {
         case .sip(let age):
             let progress = min(1, age / PetViewModel.Reaction.sipping.duration)
             // A droplet drifts down to the mouth and disappears.
-            PixelImageView(image: PropSprites.dropletImage, pixel: p * 0.7)
+            PropView(kind: .droplet, unit: p * 0.7)
                 .offset(x: p * 7.3, y: p * (top + 5.5 + progress * 3.5))
                 .opacity(1 - progress * progress)
         case .droplet(let t):
-            PixelImageView(image: PropSprites.dropletImage, pixel: p * 0.8)
+            PropView(kind: .droplet, unit: p * 0.8)
                 .offset(x: p * 16.5, y: p * (top - 2 + sin(t * 3) * 0.6))
         case .listening(let t):
             // Three pixel "sound waves" pulsing out from the ear.
@@ -218,35 +231,50 @@ struct PetStage: View, Equatable {
             // "…" dots that light up in turn above the head.
             ForEach(0..<3, id: \.self) { i in
                 let lit = animate ? Int(t / 0.35) % 4 > i : true
-                Rectangle()
+                Circle()
                     .fill(PixelPalette.outline.opacity(lit ? 0.9 : 0.25))
                     .frame(width: p * 1.2, height: p * 1.2)
                     .offset(x: p * (12.5 + Double(i) * 2.2), y: p * (top - 2.5 - Double(i) * 0.9))
             }
         case .mug(let t):
             ZStack(alignment: .topLeading) {
-                PixelImageView(image: PropSprites.mugImage, pixel: p * 0.8)
+                PropView(kind: .mug, unit: p * 0.8)
             }
             .offset(x: -p * 5.5, y: p * (top + 13 + (animate ? sin(t * 1.5) * 0.15 : 0)))
+        case .charging(let t):
+            Image(systemName: "bolt.fill")
+                .font(.system(size: p * 3.2, weight: .black))
+                .foregroundStyle(Color(red: 1, green: 0.8, blue: 0.15))
+                .shadow(color: Color(red: 0.55, green: 0.35, blue: 0), radius: 0, x: p * 0.15, y: p * 0.15)
+                .shadow(color: Color(red: 1, green: 0.85, blue: 0.3).opacity(0.7), radius: p * 0.8)
+                .rotationEffect(.degrees(animate ? sin(t * 2.4) * 8 : 0))
+                .offset(x: p * 17.6, y: p * (top - 3.2 + (animate ? sin(t * 2.4) * 0.4 : 0)))
+        case .lowBattery(let t):
+            let on = !animate || Int(t / 0.8) % 2 == 0
+            Image(systemName: "battery.25percent")
+                .font(.system(size: p * 3.8, weight: .bold))
+                .foregroundStyle(Color(red: 0.9, green: 0.18, blue: 0.2))
+                .padding(.horizontal, p * 0.5)
+                .background(Capsule().fill(.white.opacity(0.85)))
+                .opacity(on ? 1 : 0.4)
+                .offset(x: p * 15.5, y: p * (top - 3.4))
         }
     }
 }
 
-/// A small pixel bracket ")" used for the listening sound waves.
+/// A small ")" arc used for the listening sound waves.
 private struct SoundArc: View {
     let pixel: CGFloat
     let height: Int
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<(height + 2), id: \.self) { row in
-                let edge = row == 0 || row == height + 1
-                Rectangle().fill(DP.water)
-                    .frame(width: pixel, height: pixel)
-                    .offset(x: edge ? 0 : pixel)
-            }
+        let h = CGFloat(height + 2) * pixel
+        Path { p in
+            p.move(to: CGPoint(x: pixel * 0.5, y: pixel * 0.5))
+            p.addQuadCurve(to: CGPoint(x: pixel * 0.5, y: h - pixel * 0.5), control: CGPoint(x: pixel * 2.6, y: h / 2))
         }
-        .frame(width: pixel * 2, alignment: .leading)
+        .stroke(DP.water, style: StrokeStyle(lineWidth: pixel * 0.9, lineCap: .round))
+        .frame(width: pixel * 2, height: h)
     }
 }
 
@@ -261,9 +289,9 @@ private struct ConfettiBit: View {
         let x = Double((index * 37) % 28) - 3
         let fall = (age * 7 + Double(index) * 1.7).truncatingRemainder(dividingBy: 16)
         let fade = max(0, 1 - age / PetViewModel.Reaction.celebrating.duration)
-        Rectangle()
+        RoundedRectangle(cornerRadius: pixel * 0.2)
             .fill(Self.colors[index % Self.colors.count])
-            .frame(width: pixel * 0.8, height: pixel * 0.8)
+            .frame(width: pixel * 1.1, height: pixel * 0.6)
             .rotationEffect(.degrees(Double(index) * 40 + age * 180))
             .offset(x: pixel * x, y: pixel * (fall - 2))
             .opacity(fade)
@@ -391,81 +419,127 @@ struct BubbleShape: Shape {
 
 // MARK: - Bar & badge
 
-/// Compact hover bar: Water · Focus · Chat · Capture · More.
-private struct ActionBar: View {
+/// Hover spread: labelled actions that spring out of the cat into two columns
+/// (or one, near a screen edge) and tuck back in when the cursor leaves.
+private struct ActionSpread: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var windowState: PetWindowState
     var actions: PetBarActions
+    var animate: Bool
+    var shown: Bool
+
+    struct Item: Identifiable {
+        let id: String
+        let symbol: String
+        let title: String
+        let help: String
+        let tint: Color
+        let action: () -> Void
+    }
+
+    private var items: [Item] {
+        let timer = model.focusTimerState
+        let focusTitle = timer == nil ? "Start focus" : (timer!.isRunning ? "Pause timer" : "Resume timer")
+        let ml = model.hydrationSettings.defaultServingML
+        return [
+            Item(id: "water", symbol: "drop.fill", title: "Log \(ml) ml", help: "Log \(ml) ml of water (⌃⌥W)",
+                 tint: Color(red: 0.25, green: 0.6, blue: 0.95), action: actions.logWater),
+            Item(id: "focus", symbol: timer == nil ? "timer" : (timer!.isRunning ? "pause.fill" : "play.fill"),
+                 title: focusTitle, help: focusTitle, tint: Color(red: 0.95, green: 0.55, blue: 0.2), action: actions.toggleFocus),
+            Item(id: "world", symbol: "mountain.2.fill", title: "Focus World", help: "Enter a Focus World (⌃⌥F)",
+                 tint: Color(red: 0.3, green: 0.72, blue: 0.4), action: actions.enterWorld),
+            Item(id: "chat", symbol: "bubble.left.and.text.bubble.right.fill", title: "Chat", help: "Talk to your pet (⌃⌥C)",
+                 tint: Color(red: 0.6, green: 0.45, blue: 0.95), action: actions.openChat),
+            Item(id: "note", symbol: "note.text.badge.plus", title: "New note", help: "New note or task (⌃⌥N)",
+                 tint: Color(red: 0.92, green: 0.72, blue: 0.15), action: actions.openCapture),
+            Item(id: "shot", symbol: "camera.viewfinder", title: "Screenshot", help: "Screenshot an area (⌃⌥S)",
+                 tint: Color(red: 0.15, green: 0.7, blue: 0.7), action: actions.screenshot),
+            Item(id: "text", symbol: "text.viewfinder", title: "Copy text", help: "Copy text from the screen (⌃⌥T)",
+                 tint: Color(red: 0.35, green: 0.45, blue: 0.9), action: actions.copyText),
+            Item(id: "pdf", symbol: "doc.on.doc.fill", title: "PDF tools", help: "Convert, merge, compress… (or drop files on the cat)",
+                 tint: Color(red: 0.9, green: 0.3, blue: 0.3), action: actions.pdfTools),
+            Item(id: "more", symbol: "ellipsis", title: "More…", help: "Everything else",
+                 tint: Color.gray, action: {
+                     if let m = actions.moreMenu() { m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
+                 }),
+        ]
+    }
 
     var body: some View {
-        let timer = model.focusTimerState
-        HStack(spacing: 4) {
-            ActionButton(symbol: "drop.fill",
-                         label: "Log \(model.hydrationSettings.defaultServingML) ml of water",
-                         action: actions.logWater)
-            ActionButton(symbol: timer == nil ? "timer" : (timer!.isRunning ? "pause.fill" : "play.fill"),
-                         label: timer == nil ? "Start focus" : (timer!.isRunning ? "Pause timer" : "Resume timer"),
-                         action: actions.toggleFocus)
-            ActionButton(symbol: "bubble.left.and.text.bubble.right.fill", label: "Chat", action: actions.openChat)
-            ActionButton(symbol: "square.and.pencil", label: "Quick capture", action: actions.openCapture)
-            ActionButton(symbol: "mountain.2.fill", label: "Enter Focus World", action: actions.enterWorld)
-            MoreButton(menu: actions.moreMenu)
+        let list = items
+        let layout = windowState.layout
+        let frames = layout.spreadFrames(count: list.count, mode: windowState.spread)
+        let origin = layout.bodyCenter
+        let n = list.count
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(list.enumerated()), id: \.element.id) { i, item in
+                let f = frames[i]
+                // Out: inner pills first; in: outer pills first.
+                let order = Double(windowState.spread == .split ? i % ((n + 1) / 2) : i)
+                SpreadPill(item: item)
+                    .frame(width: f.width, height: f.height)
+                    .scaleEffect(shown ? 1 : (animate ? 0.25 : 1))
+                    .opacity(shown ? 1 : 0)
+                    .position(x: shown || !animate ? f.midX : origin.x, y: shown || !animate ? f.midY : origin.y)
+                    .animation(animate
+                               ? .spring(response: 0.36, dampingFraction: 0.68).delay(shown ? order * 0.035 : (3 - min(order, 3)) * 0.02)
+                               : .easeOut(duration: 0.15),
+                               value: shown)
+                    .allowsHitTesting(shown)
+                    .accessibilityHidden(!shown)
+            }
         }
-        .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(.regularMaterial))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-        .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+        .frame(width: layout.windowSize.width, height: layout.windowSize.height, alignment: .topLeading)
+        .onAppear { windowState.spreadCount = n }
     }
 }
 
-private struct ActionButton: View {
-    var symbol: String
-    var label: String
-    var action: () -> Void
+/// Bare button style: no system chrome, slight press feedback.
+private struct SpreadPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .brightness(configuration.isPressed ? -0.05 : 0)
+    }
+}
+
+private struct SpreadPill: View {
+    let item: ActionSpread.Item
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 30, height: 26)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(hovering ? DP.accent.opacity(0.22) : .clear))
-                .contentShape(Rectangle())
+        Button(action: item.action) {
+            HStack(spacing: 7) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(item.tint.gradient))
+                Text(item.title)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 3)
+            .padding(.trailing, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Capsule().fill(item.tint.opacity(hovering ? 0.22 : 0)))
+            .background(Capsule().fill(Color(nsColor: .controlBackgroundColor).opacity(0.96)))
+            // (Capsule strokes draw stray flat ends on some renderers; a rounded rectangle doesn't.)
+            .overlay(RoundedRectangle(cornerRadius: PetLayout.pillSize.height / 2 - 0.5, style: .circular).inset(by: 0.5).stroke(hovering ? item.tint.opacity(0.8) : Color.primary.opacity(0.12), lineWidth: 1))
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SpreadPillStyle())
+        .compositingGroup()
+        .shadow(color: .black.opacity(hovering ? 0.22 : 0.14), radius: hovering ? 5 : 3, y: 1)
         .foregroundStyle(.primary)
-        .help(label)
-        .accessibilityLabel(label)
+        .scaleEffect(hovering ? 1.06 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovering)
+        .help(item.help)
+        .accessibilityLabel(item.title)
+        .accessibilityHint(item.help)
         .onHover { hovering = $0 }
-    }
-}
-
-/// "More" pops the full pet menu right under the button.
-private struct MoreButton: NSViewRepresentable {
-    var menu: () -> NSMenu?
-
-    func makeNSView(context: Context) -> NSButton {
-        let b = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "More")!,
-                         target: context.coordinator, action: #selector(Coordinator.click(_:)))
-        b.isBordered = false
-        b.imagePosition = .imageOnly
-        b.symbolConfiguration = .init(pointSize: 13, weight: .semibold)
-        b.toolTip = "More"
-        b.setAccessibilityLabel("More options")
-        return b
-    }
-
-    func updateNSView(_ b: NSButton, context: Context) { context.coordinator.menu = menu }
-    func makeCoordinator() -> Coordinator { Coordinator(menu: menu) }
-
-    final class Coordinator: NSObject {
-        var menu: () -> NSMenu?
-        init(menu: @escaping () -> NSMenu?) { self.menu = menu }
-        @MainActor @objc func click(_ sender: NSButton) {
-            guard let m = menu() else { return }
-            m.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
-        }
     }
 }
 
@@ -495,3 +569,4 @@ private struct FocusBadge: View {
         .help("Open Focus")
     }
 }
+

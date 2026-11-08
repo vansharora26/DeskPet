@@ -155,7 +155,12 @@ struct LauncherView: View {
         case .createNote: return "square.and.pencil"
         case .showStats, .summarizeFocus: return "chart.bar.fill"
         case .configureReminder: return "bell.fill"
+        case .open(.screenshot): return "camera.viewfinder"
+        case .open(.copyText): return "text.viewfinder"
+        case .open(.clipboard): return "list.clipboard"
+        case .open(.pdfTools), .pdfTool: return "doc.on.doc.fill"
         case .open: return "arrow.up.forward.app"
+        case .keepAwake, .stopKeepAwake: return "sun.max.fill"
         }
     }
 

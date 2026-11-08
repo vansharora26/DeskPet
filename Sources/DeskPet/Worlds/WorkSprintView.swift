@@ -36,7 +36,7 @@ struct WorkSprintView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if controller.settings.showPet {
-                WorldPet(world: world, state: state, coat: pet.coat, accessory: pet.accessory,
+                WorldPet(world: world, state: state, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                          motion: controller.effectiveMotion, pixel: 4, celebrateUntil: controller.celebrateUntil,
                          active: controller.windowVisible)
                     .padding(.trailing, 40).padding(.top, 8)

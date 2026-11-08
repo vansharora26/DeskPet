@@ -243,10 +243,12 @@ final class ReminderScheduler {
         let key = calendar.dayKey(Date())
         guard model.data.briefing.mode != .off, force || model.data.briefing.lastBriefingDay != key else { return }
         model.updateBriefing { $0.lastBriefingDay = key }
-        let b = Briefing.build(model.data, now: Date(), calendar: calendar)
+        let b = Briefing.build(model.data, now: Date(), calendar: calendar, events: CalendarService.shared.events)
         let count = b.dueToday.count
-        let message = count == 0 ? "Good day! Your briefing is ready — nothing due today."
-                                 : "Your briefing is ready: \(count) task\(count == 1 ? "" : "s") for today."
+        let meetings = b.meetings.filter { !$0.isAllDay }.count
+        let meetingText = meetings == 0 ? "" : " and \(meetings) meeting\(meetings == 1 ? "" : "s")"
+        let message = count == 0 && meetings == 0 ? "Good day! Your briefing is ready — nothing due today."
+            : "Your briefing is ready: \(count) task\(count == 1 ? "" : "s")\(meetingText) today."
         pet.show(PetCallout(kind: .briefing, symbol: "sun.max.fill", message: message,
                             actions: [.init(title: "Open", isPrimary: true) { [weak self] in
                                 self?.pet.clearCallout(kind: .briefing)

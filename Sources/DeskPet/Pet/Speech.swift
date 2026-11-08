@@ -53,4 +53,5 @@ enum Speech {
     static let taskDone = ["Done and dusted ✓", "One less thing!", "Task complete — nice!", "Checked off!"]
     static let saved = ["Got it, saved!", "Tucked away safely.", "Noted!"]
     static let movementDone = ["Stretchy! Feels good, right?", "Movement logged. Wiggle on!"]
+    static let backToFocus = ["Welcome back! 💪", "There you are. Back to it!", "Good call. Focus on!"]
 }

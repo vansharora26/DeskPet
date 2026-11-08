@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var behavior: PetBehavior!
     private var scheduler: ReminderScheduler!
     private var petWindow: PetWindowController!
+    private var roamer: PetRoamer!
+    private var distractionGuard: DistractionGuardController!
     private var statusBar: StatusBarController?
     private var welcomeWindow: AuxWindowController?
     private var cancellables = Set<AnyCancellable>()
@@ -76,6 +78,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.router.openSettings(.license)
         }
         license.start()
+        let battery = BatteryMonitor.shared
+        battery.isEnabled = { [unowned self] in self.settings.batteryMoodsEnabled }
+        battery.onChange = { [weak self] old, new in
+            guard let self, self.settings.batteryMoodsEnabled else { return }
+            // Stay quiet during focus, except when it's about to run out.
+            guard self.pet.mode != .focused || new == .critical else { return }
+            if let line = BatteryMood.line(from: old, to: new, level: battery.reading?.level ?? 0, name: self.pet.name) {
+                self.pet.say(line)
+            }
+        }
+        battery.start()
+        MacTools.shared.showPDFTools = { [weak self] tool, files in self?.router.showPDFTools(tool, files: files) }
+        router.pdfModel.onDone = { [weak self] message in self?.pet.say("Done! \(message).") }
+        MacTools.shared.configure(
+            pet: pet, settings: settings, dataDirectory: dataDirectory,
+            hidePet: { [unowned self] in
+                guard self.petWindow.isVisible else { return false }
+                self.petWindow.hide()
+                return true
+            },
+            showPet: { [unowned self] in if self.settings.petVisible { self.petWindow.show() } },
+            saveNote: { [unowned self] text in (try? self.model.addItem(text, kind: .note)) != nil })
+        roamer = PetRoamer(window: petWindow, settings: settings, pet: pet,
+                           isAllowed: { [unowned self] in self.license.lockedReason(.roaming) == nil })
+        roamer.start()
+        distractionGuard = DistractionGuardController(
+            model: model, pet: pet, settings: settings, notifications: notifications,
+            isAllowed: { [unowned self] in self.license.lockedReason(.distractionGuard) == nil },
+            isPetVisible: { [unowned self] in self.petWindow.isVisible })
+        distractionGuard.start()
+        CalendarService.shared.start(
+            pet: pet, model: model, settings: settings, notifications: notifications,
+            isAllowed: { [unowned self] in self.license.lockedReason(.calendar) == nil },
+            isPetVisible: { [unowned self] in self.petWindow.isVisible })
         nudgeIfTrialEndingSoon()
         offerToResumeWorldSession()
         statusBar = StatusBarController(pet: pet, model: model, actions: menuActions)
@@ -149,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openFocus: { [weak self] in self?.router.open(.focus) },
             openChat: { [weak self] in self?.router.showConversation() },
             openCapture: { [weak self] in self?.router.open(.capture) },
+            screenshot: { MacTools.shared.screenshot() },
+            copyText: { MacTools.shared.copyTextFromScreen() },
+            pdfTools: { [weak self] in self?.router.showPDFTools() },
+            dropFiles: { [weak self] urls in
+                guard let self else { return }
+                self.pet.say("Ooh, files! Let’s see…")
+                self.router.showPDFTools(PDFTool.suggested(for: urls), files: urls)
+            },
             enterWorld: { [weak self] in self?.openWorld() },
             moreMenu: { [weak self] in
                 guard let self else { return nil }
@@ -254,6 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .logWater: run(.logWater(ml: nil))
         case .togglePet: settings.petVisible.toggle()
         case .keyboardMode: enterKeyboardMode()
+        case .screenshot: MacTools.shared.screenshot()
+        case .copyText: MacTools.shared.copyTextFromScreen()
+        case .clipboard: router.showClipboard()
         }
     }
 
@@ -364,6 +411,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func deleteAllData() {
         chat.clear()
+        MacTools.shared.clipboard.clear()
+        MacTools.shared.keepAwake.stop(reason: .user)
         KeychainStore.deleteAPIKey()
         notifications.removeAll()
         model.deleteAllData()

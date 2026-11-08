@@ -19,9 +19,9 @@ struct QuickCaptureView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: asTask ? "checkmark.circle" : "square.and.pencil")
+                Image(systemName: asTask ? "checkmark.circle" : "note.text")
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(DP.accent)
-                TextField(asTask ? "New task…" : "Capture an idea…", text: $text, axis: .vertical)
+                TextField(asTask ? "New task…" : "Jot a note… (⌘T for a task)", text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .lineLimit(1...6)

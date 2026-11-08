@@ -62,13 +62,13 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $state.tab) {
-            GeneralSettings(settings: settings, model: model, loginItem: loginItem, notifications: notifications)
+            GeneralSettings(settings: settings, model: model, loginItem: loginItem, notifications: notifications, license: license)
                 .tabItem { Label(SettingsTab.general.title, systemImage: SettingsTab.general.symbol) }.tag(SettingsTab.general)
-            PetSettings(pet: pet, settings: settings, model: model)
+            PetSettings(pet: pet, settings: settings, model: model, license: license)
                 .tabItem { Label(SettingsTab.pet.title, systemImage: SettingsTab.pet.symbol) }.tag(SettingsTab.pet)
             WaterSettings(model: model)
                 .tabItem { Label(SettingsTab.water.title, systemImage: SettingsTab.water.symbol) }.tag(SettingsTab.water)
-            FocusSettingsView(model: model)
+            FocusSettingsView(model: model, settings: settings, license: license)
                 .tabItem { Label(SettingsTab.focus.title, systemImage: SettingsTab.focus.symbol) }.tag(SettingsTab.focus)
             WorldsSettingsView(model: model)
                 .tabItem { Label(SettingsTab.worlds.title, systemImage: SettingsTab.worlds.symbol) }.tag(SettingsTab.worlds)
@@ -109,6 +109,8 @@ private struct GeneralSettings: View {
     @ObservedObject var model: AppModel
     @ObservedObject var loginItem: LoginItemManager
     @ObservedObject var notifications: NotificationManager
+    @ObservedObject var license: LicenseManager
+    @ObservedObject private var calendar = CalendarService.shared
 
     var body: some View {
         Form {
@@ -126,6 +128,9 @@ private struct GeneralSettings: View {
                 }
                 Toggle("Sound effects", isOn: $settings.soundEnabled)
                 Toggle("Chatty speech bubbles", isOn: $settings.chattyEnabled)
+                if BatteryMonitor.shared.reading != nil {
+                    Toggle("React to battery (sleepy when low, perky when charging)", isOn: $settings.batteryMoodsEnabled)
+                }
             }
             Section("Reminders") {
                 Toggle("Also show reminders as macOS notifications", isOn: Binding(
@@ -166,8 +171,33 @@ private struct GeneralSettings: View {
                                                                        { v in model.updateBriefing { $0.endOfDayMinute = v } }),
                                displayedComponents: .hourAndMinute)
                 }
-                Hint(text: "Built from your DeskPet tasks, water and focus. No calendar access.")
+                Hint(text: settings.calendarEnabled && calendar.hasAccess
+                     ? "Built from your DeskPet tasks, water and focus, plus today’s meetings."
+                     : "Built from your DeskPet tasks, water and focus.")
             }
+            Section("Calendar heads-up") {
+                Toggle("Warn me before meetings and show them in Today", isOn: Binding(
+                    get: { settings.calendarEnabled },
+                    set: { on in
+                        settings.calendarEnabled = on
+                        if on && calendar.status == .notDetermined { Task { await calendar.requestAccess() } }
+                    }))
+                Stepper("Heads-up \(settings.meetingLeadMinutes) min before", value: $settings.meetingLeadMinutes,
+                        in: MeetingHeadsUp.leadRange)
+                    .disabled(!settings.calendarEnabled)
+                if !license.access.unlocksPremium {
+                    Hint(text: "Calendar heads-up is part of DeskPet Full. Add your license in Settings › License.")
+                } else if settings.calendarEnabled && (calendar.status == .denied || calendar.status == .restricted || calendar.status == .writeOnly) {
+                    HStack {
+                        Hint(text: "DeskPet doesn’t have access to your calendars.")
+                        Spacer()
+                        Button("Open Settings…") { calendar.openPrivacySettings() }.controlSize(.small)
+                    }
+                } else {
+                    Hint(text: "Reads events from the macOS Calendar app (including accounts added there, like Google or Outlook). Read-only; nothing leaves your Mac. Declined and cancelled events are skipped.")
+                }
+            }
+            MacToolsSettings(settings: settings)
             Section("System") {
                 Toggle("Open DeskPet at login", isOn: Binding(
                     get: { loginItem.isEnabled || loginItem.needsApproval },
@@ -191,12 +221,81 @@ private struct GeneralSettings: View {
     }
 }
 
+// MARK: - Mac tools
+
+private struct MacToolsSettings: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject private var keepAwake = MacTools.shared.keepAwake
+    @State private var screenAccess = CGPreflightScreenCaptureAccess()
+    @State private var axTrusted = AXIsProcessTrusted()
+
+    var body: some View {
+        Section("Screenshots & copy text") {
+            Toggle("Copy screenshots to the clipboard", isOn: $settings.screenshotCopyToClipboard)
+            Toggle("Save screenshots to Pictures › DeskPet Screenshots", isOn: $settings.screenshotSaveToFile)
+            Toggle("Hide the pet while taking a screenshot", isOn: $settings.screenshotHidePet)
+            if !screenAccess {
+                HStack {
+                    Hint(text: "Needs Screen Recording permission (macOS asks the first time).")
+                    Spacer()
+                    Button("Open Settings…") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                    }.controlSize(.small)
+                }
+            } else {
+                Hint(text: "⌃⌥S: drag over an area (Space switches to a window, Esc cancels). ⌃⌥T copies the text in an area instead — recognised on this Mac, nothing is uploaded.")
+            }
+        }
+        Section("Clipboard history") {
+            Toggle("Remember the last \(ClipboardHistory.maxEntries) things I copy (text only)", isOn: $settings.clipboardHistoryEnabled)
+            Toggle("Paste right away when I pick one", isOn: Binding(
+                get: { settings.clipboardAutoPaste },
+                set: { on in
+                    settings.clipboardAutoPaste = on
+                    if on { axTrusted = MacTools.requestAccessibility() }
+                }))
+                .disabled(!settings.clipboardHistoryEnabled)
+            if settings.clipboardAutoPaste && !axTrusted {
+                Hint(text: "Pasting for you needs Accessibility permission (System Settings › Privacy & Security › Accessibility). Until then, picking an item copies it and you press ⌘V.")
+            }
+            HStack {
+                Hint(text: "⌃⌥B opens it. Stored only on this Mac; password-manager copies are never kept.")
+                Spacer()
+                Button("Clear History") { MacTools.shared.clipboard.clear() }.controlSize(.small)
+                    .disabled(MacTools.shared.clipboard.history.entries.isEmpty)
+            }
+        }
+        Section("Keep awake") {
+            if let status = keepAwake.statusText {
+                HStack {
+                    Label(status, systemImage: "sun.max.fill")
+                    Spacer()
+                    Button("Turn Off") { MacTools.shared.stopKeepAwake() }.controlSize(.small)
+                }
+            } else {
+                HStack {
+                    Text("Keep my Mac awake for")
+                    Spacer()
+                    ForEach(KeepAwake.presets, id: \.self) { m in
+                        Button(m.map { KeepAwake.title(minutes: $0).replacingOccurrences(of: "minutes", with: "min") } ?? "Until off") {
+                            MacTools.shared.setKeepAwake(minutes: m)
+                        }.controlSize(.small)
+                    }
+                }
+            }
+            Hint(text: "Stops the display and Mac from sleeping when idle. Closing the lid still sleeps. The pet wears sunglasses while it’s on.")
+        }
+        .onAppear { screenAccess = CGPreflightScreenCaptureAccess(); axTrusted = AXIsProcessTrusted() }
+    }
+}
+
 // MARK: - Pet
 
 private struct PetSettings: View {
     @ObservedObject var pet: PetViewModel
     @ObservedObject var settings: AppSettings
     @ObservedObject var model: AppModel
+    @ObservedObject var license: LicenseManager
     @State private var name = ""
     @State private var confirmReset = false
 
@@ -206,7 +305,7 @@ private struct PetSettings: View {
             Section("Your pet") {
                 HStack(spacing: 14) {
                     CatCanvas(pose: CatPose(eyes: pet.isSleeping ? .closed : .happy, blush: true,
-                                            coat: pet.coat, accessory: pet.accessory), pixel: 3)
+                                            coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor), pixel: 3)
                     VStack(alignment: .leading, spacing: 4) {
                         TextField("Name", text: $name).textFieldStyle(.roundedBorder).onSubmit { pet.rename(name) }
                         Text(PetMenu.statusLine(pet)).font(.callout).foregroundStyle(.secondary)
@@ -216,10 +315,27 @@ private struct PetSettings: View {
                 StatRow(title: "Energy", symbol: "bolt.fill", value: pet.stats.energy, tint: .yellow)
                 StatRow(title: "Hunger", symbol: "fork.knife", value: pet.stats.hunger, tint: .orange)
             }
+            Section("Roaming") {
+                Toggle("Let \(pet.name) wander around the screen", isOn: $settings.roamingEnabled)
+                Group {
+                    Toggle("Hop onto the tops of windows", isOn: $settings.roamClimbWindows)
+                    Toggle("Chase the cursor now and then", isOn: $settings.roamChaseCursor)
+                    Toggle("Nap when I’m away for a few minutes", isOn: $settings.roamNapWhenIdle)
+                }
+                .disabled(!settings.roamingEnabled)
+                if license.access.unlocksPremium {
+                    Hint(text: "Stays still while you hover, drag, focus, talk or have a reminder open. Only window positions are read — never titles or contents.")
+                } else {
+                    Hint(text: "Roaming is part of DeskPet Full. Add your license in Settings › License to bring it back.")
+                }
+                if !settings.effectiveAnimations {
+                    Hint(text: "Roaming is paused because animations are off (or macOS Reduce Motion is on).")
+                }
+            }
             Section("Coat") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
                     ForEach(CoatTheme.allCases) { coat in
-                        WardrobeTile(pose: CatPose(eyes: .open, coat: coat, accessory: p.accessory),
+                        WardrobeTile(pose: CatPose(eyes: .open, coat: coat, accessory: p.accessory, eyeColor: p.eyeColor),
                                      title: coat.title, selected: p.coat == coat,
                                      lockedLevel: p.isUnlocked(coat) ? nil : coat.unlockLevel) {
                             model.updateProgression { $0.coat = coat }
@@ -227,12 +343,24 @@ private struct PetSettings: View {
                     }
                 }
             }
+            Section("Eyes") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
+                    WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat), title: "Natural", selected: p.eyeColor == nil,
+                                 lockedLevel: nil) { model.updateProgression { $0.eyeColor = nil } }
+                    ForEach(EyeColor.allCases) { eye in
+                        WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat, eyeColor: eye), title: eye.title,
+                                     selected: p.eyeColor == eye, lockedLevel: nil) {
+                            model.updateProgression { $0.eyeColor = eye }
+                        }
+                    }
+                }
+            }
             Section("Accessory") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
-                    WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat), title: "None", selected: p.accessory == nil,
+                    WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat, eyeColor: p.eyeColor), title: "None", selected: p.accessory == nil,
                                  lockedLevel: nil) { model.updateProgression { $0.accessory = nil } }
                     ForEach(Accessory.allCases) { a in
-                        WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat, accessory: a), title: a.title,
+                        WardrobeTile(pose: CatPose(eyes: .open, coat: p.coat, accessory: a, eyeColor: p.eyeColor), title: a.title,
                                      selected: p.accessory == a, lockedLevel: p.isUnlocked(a) ? nil : a.unlockLevel) {
                             model.updateProgression { $0.accessory = a }
                         }
@@ -385,6 +513,8 @@ private struct WaterSettings: View {
 
 private struct FocusSettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var license: LicenseManager
 
     var body: some View {
         let s = model.focusSettings
@@ -417,8 +547,107 @@ private struct FocusSettingsView: View {
                         in: FocusSettings.movementRange, step: 15).disabled(!s.movementRemindersEnabled)
                 Hint(text: "Follows your quiet hours from the Water tab.")
             }
+            DistractionGuardSection(settings: settings, licensed: license.access.unlocksPremium)
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Apps and sites that earn a gentle nudge during focus sessions.
+private struct DistractionGuardSection: View {
+    @ObservedObject var settings: AppSettings
+    var licensed: Bool
+    @State private var newSite = ""
+
+    var body: some View {
+        Section("Distraction guard") {
+            Toggle("Nudge me when I open a distracting app or site during focus", isOn: $settings.distractionGuardEnabled)
+            if !licensed {
+                Hint(text: "The distraction guard is part of DeskPet Full. Add your license in Settings › License.")
+            }
+            Group {
+                LabeledContent("Apps") {
+                    Menu("Add app") {
+                        ForEach(runningApps, id: \.bundleID) { app in
+                            Button(app.name) { add(app: app.bundleID) }
+                        }
+                        if !runningApps.isEmpty { Divider() }
+                        Button("Choose from Applications…", action: chooseApp)
+                    }
+                    .fixedSize()
+                }
+                ForEach(settings.distractingApps, id: \.self) { id in
+                    HStack {
+                        Image(nsImage: AppInfo.icon(id)).resizable().frame(width: 18, height: 18)
+                        Text(AppInfo.name(id))
+                        Spacer()
+                        removeButton { settings.distractingApps.removeAll { $0 == id } }
+                    }
+                }
+                Toggle("Also check websites in Safari, Chrome, Edge, Brave, Arc, Vivaldi and Opera",
+                       isOn: $settings.distractionGuardChecksSites)
+                if settings.distractionGuardChecksSites {
+                    ForEach(settings.distractingSites, id: \.self) { site in
+                        HStack {
+                            Image(systemName: "globe").foregroundStyle(.secondary)
+                            Text(site)
+                            Spacer()
+                            removeButton { settings.distractingSites.removeAll { $0 == site } }
+                        }
+                    }
+                    HStack {
+                        TextField("Add a site, e.g. news.ycombinator.com", text: $newSite).onSubmit(addSite)
+                        Button("Add", action: addSite).disabled(DistractionGuard.normalizedSite(newSite) == nil)
+                    }
+                }
+            }
+            .disabled(!settings.distractionGuardEnabled)
+            Hint(text: "Only during focus sessions, after 10 seconds on a distraction, and at most every few minutes. DeskPet checks which app is in front and — for sites — asks your browser for the current tab’s address (macOS will ask you once). Nothing is saved or sent. Firefox can’t be checked.")
+        }
+    }
+
+    private func removeButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove")
+    }
+
+    private var runningApps: [(name: String, bundleID: String)] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .compactMap { app in app.bundleIdentifier.map { (app.localizedName ?? $0, $0) } }
+            .filter { !settings.distractingApps.contains($0.bundleID) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func add(app id: String) {
+        if !settings.distractingApps.contains(id) { settings.distractingApps.append(id) }
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls { if let id = Bundle(url: url)?.bundleIdentifier { add(app: id) } }
+    }
+
+    private func addSite() {
+        guard let site = DistractionGuard.normalizedSite(newSite) else { return }
+        if !settings.distractingSites.contains(site) { settings.distractingSites.append(site) }
+        newSite = ""
+    }
+}
+
+/// Display name and icon for an app bundle identifier.
+private enum AppInfo {
+    static func url(_ id: String) -> URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) }
+    static func name(_ id: String) -> String {
+        url(id).map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? id
+    }
+    static func icon(_ id: String) -> NSImage {
+        url(id).map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)!
     }
 }
 
@@ -621,72 +850,31 @@ private struct AISettings: View {
     @ObservedObject var chat: ChatModel
     @State private var keyInput = ""
     @State private var hasKey = KeychainStore.hasAPIKey
+    @State private var savedKeyHint = KeychainStore.loadAPIKey().map(ClaudeKey.masked)
     @State private var testing = false
     @State private var testResult: (ok: Bool, text: String)?
+    @State private var showManualEntry = false
+    @State private var showAdvanced = false
     @State private var confirmClear = false
+    @State private var confirmDisconnect = false
+    /// Previews only: show a fixed state without touching the Keychain.
+    var previewConnected: Bool?
+
+    private var showsConnected: Bool { previewConnected ?? (hasKey || chat.aiState.isReady) }
 
     var body: some View {
         Form {
-            Section("Status") {
-                HStack {
-                    Circle().fill(chat.aiState.isReady ? DP.mint : Color.secondary).frame(width: 8, height: 8)
-                    Text(chat.aiState.isReady ? chat.aiState.label : "Not configured — DeskPet works fully offline")
-                    Spacer()
-                    if chat.aiState.isReady {
-                        Button(testing ? "Testing…" : "Test connection", action: test).disabled(testing).controlSize(.small)
-                    }
+            if showsConnected { connectedSection } else { connectSection }
+            Section("Model") {
+                Picker("Claude model", selection: $settings.aiModel) {
+                    ForEach(ClaudeModelInfo.all) { Text($0.name).tag($0.id) }
                 }
-                if let r = testResult {
-                    Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(DP.caption).foregroundStyle(r.ok ? DP.mint : DP.danger)
-                }
-                Picker("Model", selection: $settings.aiModel) {
-                    ForEach(ChatModel.models, id: \.id) { Text($0.name).tag($0.id) }
-                }
-                if settings.aiModel == "claude-opus-5" {
-                    Hint(text: "Refusal fallback is on: if Claude Opus 5 declines a request, the API retries it on a suitable model.")
+                if let info = ClaudeModelInfo.find(settings.aiModel) {
+                    Hint(text: info.blurb + (info.refusalFallback
+                        ? " If it declines a request, the API retries it on a suitable model automatically." : ""))
                 }
             }
-            Section("API key (development setup)") {
-                if hasKey {
-                    HStack {
-                        Label("Key saved in your macOS Keychain", systemImage: "key.fill")
-                        Spacer()
-                        Button("Remove", role: .destructive) {
-                            KeychainStore.deleteAPIKey()
-                            hasKey = false
-                            testResult = nil
-                        }.controlSize(.small)
-                    }
-                } else {
-                    HStack {
-                        SecureField("sk-ant-…", text: $keyInput).textFieldStyle(.roundedBorder)
-                            .onSubmit(saveKey)
-                        Button {
-                            // Reads the clipboard only when clicked.
-                            if let s = NSPasteboard.general.string(forType: .string) {
-                                keyInput = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                                testResult = nil
-                            } else {
-                                testResult = (false, "The clipboard doesn’t contain text.")
-                            }
-                        } label: { Label("Paste", systemImage: "doc.on.clipboard") }
-                        .help("Paste the key from the clipboard")
-                        Button("Save", action: saveKey)
-                            .disabled(keyInput.trimmingCharacters(in: .whitespaces).count < 10)
-                    }
-                }
-                Hint(text: "Stored only in your login Keychain — never in DeskPet’s files, settings, logs or the app itself. Get a key at console.anthropic.com. Usage is billed to your Anthropic account.")
-            }
-            Section("Production: backend proxy (optional)") {
-                TextField("https://your-backend.example.com/v1/messages", text: $settings.aiProxyURL)
-                    .textFieldStyle(.roundedBorder)
-                if let problem = ClaudeClient.proxyURLProblem(settings.aiProxyURL) {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill").font(DP.caption).foregroundStyle(DP.danger)
-                }
-                Hint(text: "If set, DeskPet sends requests to this HTTPS endpoint instead, without any key. Your server adds the key and forwards to the Claude API. See README › AI setup.")
-            }
-            Section("What the AI can see") {
+            Section("What Claude can see") {
                 Picker("Reading your tasks, notes & stats", selection: $settings.aiDataAccess) {
                     ForEach(AIDataAccess.allCases) { Text($0.title).tag($0) }
                 }
@@ -705,44 +893,190 @@ private struct AISettings: View {
                         .disabled(chat.messages.isEmpty)
                 }
             }
+            Section {
+                DisclosureGroup("Advanced: company or team proxy", isExpanded: $showAdvanced) {
+                    TextField("https://your-backend.example.com/v1/messages", text: $settings.aiProxyURL)
+                        .textFieldStyle(.roundedBorder)
+                    if let problem = ClaudeClient.proxyURLProblem(settings.aiProxyURL) {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill").font(DP.caption).foregroundStyle(DP.danger)
+                    }
+                    Hint(text: "Only if your organisation runs a server that holds the key. DeskPet then sends requests there instead, without any key. See README › AI setup.")
+                }
+            }
         }
         .formStyle(.grouped)
         .confirmationDialog("Clear the chat history?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) { chat.clear() }
         }
+        .confirmationDialog("Disconnect your Claude account?", isPresented: $confirmDisconnect) {
+            Button("Disconnect", role: .destructive) { disconnect() }
+        } message: {
+            Text("The key is removed from this Mac’s Keychain. It still exists in your Claude Console — delete it there too if you won’t use it again.")
+        }
     }
 
-    private func saveKey() {
-        let key = keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard key.count >= 10 else { return }
-        do {
-            try KeychainStore.saveAPIKey(key)
-            keyInput = ""
-            hasKey = true
-            testResult = nil
-        } catch {
+    // MARK: Not connected
+
+    private var connectSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles").font(.system(size: 22, weight: .semibold)).foregroundStyle(DP.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connect your Claude").font(.system(size: 15, weight: .semibold))
+                        Text("Chat with your pet using your own Claude account. About a minute to set up.")
+                            .font(DP.caption).foregroundStyle(.secondary)
+                    }
+                }
+                step(1, "Open the Claude Console and sign in (or create a free account).") {
+                    Button("Open Claude Console") { NSWorkspace.shared.open(ClaudeKey.consoleKeysURL) }
+                }
+                step(2, "Click “Create Key”, name it “DeskPet”, then click Copy.") { EmptyView() }
+                step(3, "Come back here and connect. DeskPet checks the key right away.") {
+                    Button {
+                        connect(from: NSPasteboard.general.string(forType: .string) ?? "")
+                    } label: {
+                        Label(testing ? "Connecting…" : "Paste & Connect", systemImage: "link")
+                    }
+                    .buttonStyle(.borderedProminent).tint(DP.accent).disabled(testing)
+                }
+                if showManualEntry {
+                    HStack {
+                        SecureField("sk-ant-…", text: $keyInput).textFieldStyle(.roundedBorder)
+                            .onSubmit { connect(from: keyInput) }
+                        Button("Connect") { connect(from: keyInput) }.disabled(testing)
+                    }
+                } else {
+                    Button("Type the key instead") { showManualEntry = true }.buttonStyle(.link).font(DP.caption)
+                }
+                if let r = testResult { resultLabel(r) }
+            }
+            .padding(.vertical, 4)
+            Hint(text: "Claude API usage is billed by Anthropic to your Console account, separately from a Claude Pro or Max plan — add a little credit under Billing first. The key is stored only in your Mac’s Keychain; DeskPet never sees your password and never sends the key anywhere except to Anthropic.")
+        }
+    }
+
+    private func step<Accessory: View>(_ n: Int, _ text: String, @ViewBuilder accessory: () -> Accessory) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("\(n)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                .frame(width: 22, height: 22).background(Circle().fill(DP.accent))
+            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            accessory()
+        }
+    }
+
+    // MARK: Connected
+
+    private var connectedSection: some View {
+        Section("Your Claude account") {
+            HStack {
+                Circle().fill(DP.mint).frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(chat.aiState.isReady || previewConnected == true ? "Connected · \(ChatModel.modelName(settings.aiModel))" : "Key saved").font(.system(size: 13, weight: .semibold))
+                    if case .proxy = chat.aiState {
+                        Text("Using your organisation’s proxy").font(DP.caption).foregroundStyle(.secondary)
+                    } else if let hint = previewConnected == true ? "sk-ant-…x7Qe" : savedKeyHint {
+                        Text("Key \(hint) · in your Mac’s Keychain").font(DP.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button(testing ? "Checking…" : "Check connection", action: test).disabled(testing).controlSize(.small)
+                if hasKey {
+                    Button("Disconnect", role: .destructive) { confirmDisconnect = true }.controlSize(.small)
+                }
+            }
+            if let r = testResult { resultLabel(r) }
+            HStack(spacing: 14) {
+                Button("Usage & billing") { NSWorkspace.shared.open(ClaudeKey.consoleBillingURL) }.buttonStyle(.link)
+                Button("Manage keys") { NSWorkspace.shared.open(ClaudeKey.consoleKeysURL) }.buttonStyle(.link)
+            }
+            .font(DP.caption)
+        }
+    }
+
+    @ViewBuilder private func resultLabel(_ r: (ok: Bool, text: String)) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(DP.caption).foregroundStyle(r.ok ? DP.mint : DP.danger)
+                .fixedSize(horizontal: false, vertical: true)
+            if !r.ok && r.text.contains("credits") {
+                Button("Open Billing") { NSWorkspace.shared.open(ClaudeKey.consoleBillingURL) }.buttonStyle(.link).font(DP.caption)
+            }
+        }
+    }
+
+    // MARK: Actions
+
+    /// Validates the pasted key, saves it to the Keychain, and checks it with one tiny request.
+    /// A key Anthropic rejects is removed again, so a bad paste never lingers.
+    private func connect(from raw: String) {
+        testResult = nil
+        let key: String
+        do { key = try ClaudeKey.clean(raw) } catch {
+            testResult = (false, (error as? LocalizedError)?.errorDescription ?? "That key couldn’t be used.")
+            if raw.isEmpty || !(raw.hasPrefix("sk-ant")) { showManualEntry = true }
+            return
+        }
+        do { try KeychainStore.saveAPIKey(key) } catch {
             testResult = (false, error.localizedDescription)
+            return
+        }
+        keyInput = ""
+        hasKey = true
+        savedKeyHint = ClaudeKey.masked(key)
+        check(key: key) { ok, message in
+            if ok {
+                testResult = (true, "Connected! Say hi to your pet in Chat.")
+                showManualEntry = false
+            } else {
+                testResult = (false, message)
+                if message == AIError.unauthorized.errorDescription {
+                    KeychainStore.deleteAPIKey()
+                    hasKey = false
+                    savedKeyHint = nil
+                    testResult = (false, "Anthropic rejected that key. Copy it again from the Console (or create a new one).")
+                }
+            }
         }
     }
 
     private func test() {
-        testing = true
         testResult = nil
-        let client = ClaudeClient(config: .init(model: settings.aiModel, apiKey: KeychainStore.loadAPIKey(),
+        check(key: KeychainStore.loadAPIKey()) { ok, message in
+            testResult = (ok, ok ? "Connected to \(ChatModel.modelName(settings.aiModel))." : message)
+        }
+    }
+
+    private func check(key: String?, done: @escaping (Bool, String) -> Void) {
+        testing = true
+        let client = ClaudeClient(config: .init(model: settings.aiModel, apiKey: key,
                                                 proxyURL: ClaudeClient.proxyURL(from: settings.aiProxyURL)))
-        var body: [String: JSONValue] = ["model": .string(settings.aiModel), "max_tokens": 64,
+        let body: [String: JSONValue] = ["model": .string(settings.aiModel), "max_tokens": 64,
+                                         "output_config": ["effort": "low"],
                                          "messages": [["role": "user", "content": "Reply with the single word: ready"]]]
-        if settings.aiModel != "claude-haiku-4-5" { body["output_config"] = ["effort": "low"] }
         Task {
             do {
                 _ = try await client.createMessage(body)
-                testResult = (true, "Connected to \(ChatModel.modelName(settings.aiModel)).")
+                done(true, "")
             } catch {
-                testResult = (false, (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                done(false, (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
             testing = false
         }
     }
+
+    private func disconnect() {
+        KeychainStore.deleteAPIKey()
+        hasKey = false
+        savedKeyHint = nil
+        testResult = nil
+    }
+}
+
+/// For `--export-spread`: the AI tab in a fixed state.
+@MainActor func aiSettingsPreview(settings: AppSettings, chat: ChatModel, connected: Bool) -> AnyView {
+    AnyView(AISettings(settings: settings, chat: chat, previewConnected: connected))
 }
 
 // MARK: - Privacy & data

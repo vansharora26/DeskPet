@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 
 UPSTREAM = "https://api.anthropic.com/v1/messages"
-ALLOWED_MODELS = {"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"}
+ALLOWED_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
 MAX_TOKENS_CAP = 16000
 MAX_BODY_BYTES = 2_000_000
 PASS_HEADERS = ("anthropic-version", "anthropic-beta")

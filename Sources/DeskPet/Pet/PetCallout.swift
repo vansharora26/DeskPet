@@ -3,7 +3,7 @@ import Foundation
 /// An actionable speech bubble: a reminder or prompt with real buttons.
 struct PetCallout: Identifiable, Equatable {
     enum Kind: Equatable {
-        case hydration, movement, task(UUID), focusPhase, briefing, endOfDay, info
+        case hydration, movement, task(UUID), focusPhase, briefing, endOfDay, info, distraction, meeting, tool
     }
 
     struct Action: Identifiable {

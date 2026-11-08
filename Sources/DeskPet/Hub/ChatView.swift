@@ -17,7 +17,7 @@ struct ChatView: View {
                 Circle().fill(state.isReady ? DP.mint : Color.secondary).frame(width: 7, height: 7)
                 Text(state.label).font(DP.caption).foregroundStyle(.secondary)
                 if !state.isReady {
-                    Button("Set up AI", action: openSettings).buttonStyle(.link).font(DP.caption)
+                    Button("Connect your Claude", action: openSettings).buttonStyle(.link).font(DP.caption)
                 }
                 Spacer()
                 Button { confirmClear = true } label: { Image(systemName: "trash") }
@@ -98,7 +98,7 @@ struct ChatView: View {
                 .font(DP.body)
             Text(chat.aiState.isReady
                  ? "I only read your tasks, notes or stats if you allow it (Settings › AI)."
-                 : "Commands work offline. General questions need AI — set it up in Settings › AI.")
+                 : "Commands work offline. For anything else, connect your own Claude account in Settings › AI.")
                 .font(DP.caption).foregroundStyle(.secondary)
             FlowChips(items: chat.aiState.isReady
                       ? ["Help me plan my afternoon", "Break down “launch my side project”", "Log 300 ml of water", "Summarize my focus sessions this week"]

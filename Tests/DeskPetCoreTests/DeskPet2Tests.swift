@@ -412,6 +412,27 @@ private func at(_ h: Int, _ m: Int = 0, day: Int = 15) -> Date {
         var p = Progression()
         p.gamificationEnabled = false
         #expect(Accessory.allCases.allSatisfy { p.isUnlocked($0) })
+        #expect(CoatTheme.allCases.allSatisfy { p.isUnlocked($0) })
+    }
+
+    @Test func wardrobeDecodesOlderAndUnknownValues() throws {
+        // Saved by 2.3: no eye colour yet.
+        let old = try JSONDecoder().decode(Progression.self, from: Data(#"{"xp":70,"coat":"tuxedo","accessory":"bow"}"#.utf8))
+        #expect(old.coat == .tuxedo && old.accessory == .bow && old.eyeColor == nil)
+        // A coat from a newer version falls back instead of failing the whole file.
+        let newer = try JSONDecoder().decode(Progression.self, from: Data(#"{"xp":70,"coat":"galaxy","eyeColor":"blue"}"#.utf8))
+        #expect(newer.coat == .ginger && newer.eyeColor == .blue && newer.xp == 70)
+        var p = Progression()
+        p.coat = .calico
+        p.eyeColor = .oddEyed
+        let round = try JSONDecoder().decode(Progression.self, from: JSONEncoder().encode(p))
+        #expect(round.coat == .calico && round.eyeColor == .oddEyed)
+    }
+
+    @Test func everyLevelOneCoatIsFree() {
+        let p = Progression()
+        #expect(CoatTheme.allCases.filter { $0.unlockLevel == 1 }.allSatisfy { p.isUnlocked($0) })
+        #expect(!p.isUnlocked(.bubblegum))
     }
 
     @Test func streaksAreForgiving() {

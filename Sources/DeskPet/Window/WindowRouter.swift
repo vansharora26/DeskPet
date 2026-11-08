@@ -56,6 +56,9 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     private var hubWindow: NSWindow?
     private var capturePanel: InputPanel?
     private var launcherPanel: InputPanel?
+    private var clipboardPanel: InputPanel?
+    private var pdfWindow: NSWindow?
+    let pdfModel = PDFToolsModel()
     private var settingsWindow: NSWindow?
     private var conversationWindow: NSWindow?
     /// Builds the conversation content (it needs the voice layer, owned by the app delegate).
@@ -77,6 +80,10 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     func open(_ destination: Destination) {
         switch destination {
         case .capture: showCapture()
+        case .screenshot: MacTools.shared.screenshot()
+        case .copyText: MacTools.shared.copyTextFromScreen()
+        case .clipboard: showClipboard()
+        case .pdfTools: showPDFTools()
         case .focusWorld: openFocusWorld()
         case .launcher: showLauncher()
         case .settings: openSettings(.general)
@@ -181,6 +188,32 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         w.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
+    // MARK: PDF tools
+
+    /// Opens the PDF tools, optionally on a tool and with files already added.
+    func showPDFTools(_ tool: PDFTool? = nil, files: [URL] = []) {
+        if let tool { pdfModel.tool = tool }
+        if !files.isEmpty {
+            pdfModel.files = []
+            pdfModel.add(files)
+        }
+        if pdfWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 580),
+                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                             backing: .buffered, defer: false)
+            w.contentView = NSHostingView(rootView: PDFToolsView(model: pdfModel))
+            w.title = "PDF Tools"
+            w.titlebarAppearsTransparent = true
+            w.isReleasedWhenClosed = false
+            w.minSize = NSSize(width: 760, height: 540)
+            w.center()
+            w.delegate = self
+            pdfWindow = w
+        }
+        NSApp.activate()
+        pdfWindow?.makeKeyAndOrderFront(nil)
+    }
+
     // MARK: Settings
 
     func openSettings(_ tab: SettingsTab) {
@@ -203,6 +236,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
 
     func showCapture() {
         launcherPanel?.close()
+        clipboardPanel?.close()
         if let p = capturePanel { p.present(); return }
         let panel = InputPanel()
         let view = QuickCaptureView(model: model, onClose: { [weak panel] in panel?.close() })
@@ -213,8 +247,32 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         panel.present()
     }
 
+    func showClipboard() {
+        capturePanel?.close()
+        launcherPanel?.close()
+        if let p = clipboardPanel { p.present(); return }
+        let panel = InputPanel()
+        let tools = MacTools.shared
+        let view = ClipboardHistoryView(monitor: tools.clipboard, settings: settings,
+                                        onUse: { tools.use($0) },
+                                        onClose: { [weak panel] in panel?.close() })
+        panel.contentView = roundedHost(view)
+        panel.setContentSize(panel.contentView!.fittingSize)
+        panel.onClose = { [weak self] in self?.clipboardPanel = nil }
+        clipboardPanel = panel
+        panel.present()
+        // Grow/shrink with content (turning history on, searching).
+        DispatchQueue.main.async { [weak panel] in
+            guard let panel, let content = panel.contentView else { return }
+            let top = panel.frame.maxY
+            panel.setContentSize(content.fittingSize)
+            panel.setFrameTopLeftPoint(NSPoint(x: panel.frame.minX, y: top))
+        }
+    }
+
     func showLauncher() {
         capturePanel?.close()
+        clipboardPanel?.close()
         if let p = launcherPanel { p.present(); return }
         let panel = InputPanel()
         let view = LauncherView(

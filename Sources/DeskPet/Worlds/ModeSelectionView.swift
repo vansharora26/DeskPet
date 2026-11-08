@@ -12,7 +12,7 @@ struct ModeSelectionView: View {
         ScrollView {
             VStack(spacing: 22) {
                 HStack(alignment: .bottom, spacing: 18) {
-                    WorldPet(world: .planning, state: .idle, coat: pet.coat, accessory: pet.accessory,
+                    WorldPet(world: .planning, state: .idle, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                              motion: controller.effectiveMotion, pixel: 4, active: controller.windowVisible)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Where would you like to work?").font(theme.display(30, weight: .bold))
@@ -58,7 +58,7 @@ private struct WorldCard: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
                 WorldScene(world: world, style: controller.settings.scenery, motion: .still)
-                WorldPet(world: world, state: .idle, coat: pet.coat, accessory: pet.accessory, motion: .still, pixel: 2.5)
+                WorldPet(world: world, state: .idle, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor, motion: .still, pixel: 2.5)
                     .padding(12)
                 HStack {
                     Spacer()

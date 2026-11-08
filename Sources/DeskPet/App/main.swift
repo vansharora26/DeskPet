@@ -26,6 +26,16 @@ MainActor.assumeIsolated {
         }
     }
 
+    if let i = args.firstIndex(of: "--export-spread"), i + 1 < args.count {
+        do {
+            try SpreadPreview.export(to: URL(fileURLWithPath: args[i + 1]))
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Spread export failed: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
     if let i = args.firstIndex(of: "--export-worlds"), i + 1 < args.count {
         do {
             try WorldsPreview.export(to: URL(fileURLWithPath: args[i + 1]))

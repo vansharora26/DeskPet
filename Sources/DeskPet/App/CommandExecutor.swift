@@ -172,6 +172,22 @@ struct CommandExecutor {
         case .open(let destination):
             return CommandResult(style: .info, message: "Opening \(destination.rawValue)", destination: destination)
 
+        case .keepAwake(let minutes):
+            MacTools.shared.setKeepAwake(minutes: minutes)
+            guard MacTools.shared.keepAwake.isActive else { return .error("macOS didn’t allow keeping the Mac awake.") }
+            return CommandResult(style: .success, message: minutes.map { "Keeping your Mac awake for \(KeepAwake.title(minutes: $0))" }
+                                 ?? "Keeping your Mac awake until you turn it off",
+                                 undo: { MacTools.shared.stopKeepAwake() })
+
+        case .pdfTool(let tool):
+            MacTools.shared.openPDFTools(tool)
+            return CommandResult(style: .info, message: "Opening \(tool.title)")
+
+        case .stopKeepAwake:
+            let was = MacTools.shared.keepAwake.isActive
+            MacTools.shared.stopKeepAwake()
+            return CommandResult(style: .info, message: was ? "Your Mac can sleep normally again" : "Keep awake wasn’t on")
+
         case .waterTotal:
             let total = model.todayWaterML
             let target = model.hydrationSettings.dailyTargetML

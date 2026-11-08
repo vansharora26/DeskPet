@@ -2,47 +2,84 @@ import Foundation
 
 /// Cosmetic items. Purely visual; nothing functional is ever locked.
 public enum Accessory: String, Codable, CaseIterable, Sendable, Identifiable {
-    case bow, glasses, scarf, partyHat, headphones, crown
+    case bow, flower, glasses, bellCollar, scarf, partyHat, sunglasses, headphones, beanie, crown, wizardHat
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .bow: return "Bow"
+        case .flower: return "Flower"
         case .glasses: return "Glasses"
+        case .bellCollar: return "Bell collar"
         case .scarf: return "Scarf"
         case .partyHat: return "Party hat"
+        case .sunglasses: return "Sunglasses"
         case .headphones: return "Headphones"
+        case .beanie: return "Beanie"
         case .crown: return "Crown"
+        case .wizardHat: return "Wizard hat"
         }
     }
     public var unlockLevel: Int {
         switch self {
-        case .bow: return 2
+        case .bow, .flower: return 2
         case .glasses: return 3
-        case .scarf: return 4
+        case .bellCollar, .scarf: return 4
         case .partyHat: return 5
-        case .headphones: return 6
+        case .sunglasses, .headphones: return 6
+        case .beanie: return 7
         case .crown: return 8
+        case .wizardHat: return 10
         }
     }
 }
 
-/// Fur colour themes (palette swaps of the same pixel art).
+/// Fur colours and markings (tabby, tuxedo, calico, Siamese points, solid).
 public enum CoatTheme: String, Codable, CaseIterable, Sendable, Identifiable {
-    case ginger, smoky, tuxedo, biscuit
+    case ginger, smoky, midnight, snow, tuxedo, calico, siamese, cocoa, biscuit, lilac, mint, bubblegum
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .ginger: return "Ginger"
         case .smoky: return "Smoky"
+        case .midnight: return "Midnight"
+        case .snow: return "Snow"
         case .tuxedo: return "Tuxedo"
+        case .calico: return "Calico"
+        case .siamese: return "Siamese"
+        case .cocoa: return "Cocoa"
         case .biscuit: return "Biscuit"
+        case .lilac: return "Lilac"
+        case .mint: return "Mint"
+        case .bubblegum: return "Bubblegum"
         }
     }
     public var unlockLevel: Int {
         switch self {
-        case .ginger, .smoky: return 1
+        case .ginger, .smoky, .midnight, .snow: return 1
+        case .calico: return 2
         case .tuxedo: return 3
+        case .siamese, .cocoa: return 4
         case .biscuit: return 5
+        case .lilac: return 6
+        case .mint: return 7
+        case .bubblegum: return 9
+        }
+    }
+}
+
+/// Eye colour. `nil` in `Progression.eyeColor` means the coat's natural colour.
+public enum EyeColor: String, Codable, CaseIterable, Sendable, Identifiable {
+    case dark, amber, green, blue, hazel, violet, oddEyed
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .dark: return "Dark"
+        case .amber: return "Amber"
+        case .green: return "Green"
+        case .blue: return "Blue"
+        case .hazel: return "Hazel"
+        case .violet: return "Violet"
+        case .oddEyed: return "Odd-eyed"
         }
     }
 }
@@ -87,6 +124,8 @@ public struct Progression: Codable, Equatable, Sendable {
     public var showStreaks = true
     public var accessory: Accessory?
     public var coat: CoatTheme = .ginger
+    /// Never locked; nil follows the coat.
+    public var eyeColor: EyeColor?
     /// dayKey → source → points earned that day.
     public var dailyXP: [String: [String: Int]] = [:]
     public var milestones: [String] = []
@@ -208,6 +247,7 @@ extension Progression {
         showStreaks = c.value(.showStreaks, default: true)
         accessory = c.value(.accessory, default: nil)
         coat = c.value(.coat, default: .ginger)
+        eyeColor = c.value(.eyeColor, default: nil)
         dailyXP = c.value(.dailyXP, default: [:])
         milestones = c.value(.milestones, default: [])
         activeDays = c.value(.activeDays, default: [])

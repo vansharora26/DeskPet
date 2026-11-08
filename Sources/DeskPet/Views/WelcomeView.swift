@@ -16,7 +16,7 @@ struct WelcomeView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            WelcomeCat(coat: pet.coat)
+            WelcomeCat(coat: pet.coat, eyeColor: pet.eyeColor)
                 .offset(x: 9) // centre the body rather than body + tail
                 .padding(.top, 4)
 
@@ -39,7 +39,7 @@ struct WelcomeView: View {
                 Tip(symbol: "hand.tap.fill", text: "**Click** to pet, **drag** to move, **right-click** for everything.")
                 Tip(symbol: "drop.fill", text: "**⌃⌥W** logs a glass of water from anywhere.")
                 Tip(symbol: "command", text: "**⌃⌥Space** opens the launcher: “focus for 30 minutes”, “remind me to call Sam at 6 pm”.")
-                Tip(symbol: "square.and.pencil", text: "**⌃⌥N** captures a note in seconds. **⌃⌥C** opens chat.")
+                Tip(symbol: "note.text.badge.plus", text: "**⌃⌥N** captures a note in seconds. **⌃⌥C** opens chat.")
                 Tip(symbol: "lock.shield.fill", text: "Everything stays on your Mac. AI is optional and off until you add a key.")
             }
             .padding(14)
@@ -99,13 +99,14 @@ struct WelcomeView: View {
 /// Waving hello. Updates only when the pose actually changes, to stay light.
 private struct WelcomeCat: View {
     var coat: CoatTheme
+    var eyeColor: EyeColor?
     @State private var tick = Date()
     private let timer = Timer.publish(every: 1.0 / 6.0, tolerance: 0.03, on: .main, in: .common).autoconnect()
 
     private func pose(at date: Date) -> CatPose {
         let t = date.timeIntervalSinceReferenceDate
         return CatPose(eyes: PetAnimator.isBlinking(t) ? .blink : .happy,
-                       mouthOpen: true, blush: true, tailFrame: Int(t / 0.5) % 2, coat: coat)
+                       mouthOpen: true, blush: true, tailFrame: Int(t / 0.5) % 2, coat: coat, eyeColor: eyeColor)
     }
 
     var body: some View {

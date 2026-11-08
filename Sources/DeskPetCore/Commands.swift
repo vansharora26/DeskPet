@@ -11,6 +11,8 @@ public enum StatsPeriod: String, Codable, Sendable {
 
 public enum Destination: String, Codable, Sendable, CaseIterable {
     case today, chat, capture, water, focus, tasks, notes, stats, settings, launcher, focusWorld
+    /// Mac tools.
+    case screenshot, copyText, clipboard, pdfTools
 }
 
 /// Every action DeskPet can perform, from the launcher, chat, AI tools, or UI.
@@ -39,6 +41,11 @@ public enum AppCommand: Equatable, Sendable {
     case timerStatus
     case configureReminder(kind: ReminderKind, enabled: Bool?, intervalMinutes: Int?)
     case open(Destination)
+    /// Keep the Mac (and display) awake; nil = until turned off.
+    case keepAwake(minutes: Int?)
+    case stopKeepAwake
+    /// Open the PDF tools on a specific tool.
+    case pdfTool(PDFTool)
 
     /// Actions that lose data or can't be undone need an explicit confirmation.
     public var needsConfirmation: Bool {
@@ -77,7 +84,18 @@ public enum AppCommand: Equatable, Sendable {
             if enabled == false { return "Turn off \(kind.title.lowercased())" }
             if let interval { return "\(kind.title) every \(interval) minutes" }
             return "Turn on \(kind.title.lowercased())"
-        case .open(let d): return d == .focusWorld ? "Enter Focus Worlds" : "Open \(d.rawValue.capitalized)"
+        case .open(let d):
+            switch d {
+            case .focusWorld: return "Enter Focus Worlds"
+            case .screenshot: return "Take a screenshot"
+            case .copyText: return "Copy text from the screen"
+            case .clipboard: return "Open clipboard history"
+            case .pdfTools: return "Open PDF tools"
+            default: return "Open \(d.rawValue.capitalized)"
+            }
+        case .keepAwake(let m): return m.map { "Keep your Mac awake for \(KeepAwake.title(minutes: $0))" } ?? "Keep your Mac awake until turned off"
+        case .stopKeepAwake: return "Let your Mac sleep normally again"
+        case .pdfTool(let t): return "PDF tools: \(t.title)"
         case .waterTotal: return "Show today’s water total"
         case .timerStatus: return "Show time left on the timer"
         }
@@ -109,6 +127,8 @@ public enum CommandParser {
         let lower = text.lowercased()
 
         if let c = reminder(text, lower, now, calendar) { return c }
+        if let c = keepAwake(lower) { return c }
+        if let c = macTool(lower) { return c }
         if let c = reminderConfig(lower) { return c }
         if let c = waterGoal(lower) { return c }
         if let c = open(lower) { return c }
@@ -322,6 +342,59 @@ public enum CommandParser {
                 return .open(dest)
             }
         }
+        return nil
+    }
+
+    // MARK: Mac tools
+
+    private static func keepAwake(_ lower: String) -> AppCommand? {
+        let subject = #"(?:(?:keep|stay)\s+(?:(?:my|the)\s+)?(?:mac|computer|screen|display|laptop)?\s*awake|caffeinate|don'?t\s+(?:let\s+(?:my\s+|the\s+)?(?:mac|computer|screen)\s+)?sleep|no\s+sleep)"#
+        if Rx.first(#"^(?:stop|end|cancel|turn\s+off|disable)\s+(?:keeping\s+(?:(?:my|the)\s+)?(?:mac|computer|screen)?\s*awake|keep\s*awake|caffeinat\w*)$|^(?:keep\s*awake|caffeinate)\s+off$|^let\s+(?:my\s+|the\s+)?(?:mac|computer|screen)\s+sleep$"#, in: lower) != nil {
+            return .stopKeepAwake
+        }
+        guard Rx.first("^(?:please\\s+)?\(subject)\\b", in: lower) != nil else { return nil }
+        if Rx.first(#"\b(until\s+(?:i\s+)?(?:turn|switch)\w*\s+(?:it\s+)?off|forever|indefinitely)\b"#, in: lower) != nil {
+            return .keepAwake(minutes: nil)
+        }
+        if let m = Rx.first(#"\bfor\s+(?:(\d+(?:\.\d+)?|an?|half an)\s*)?(minutes?|mins?|m|hours?|hrs?|h)\b"#, in: lower) {
+            let q = m[1] ?? "1"
+            let qty = q == "half an" ? 0.5 : (q == "a" || q == "an" ? 1 : (Double(q) ?? 1))
+            let minutes = Int(((m[2] ?? "").hasPrefix("h") ? qty * 60 : qty).rounded())
+            guard minutes > 0 else { return nil }
+            return .keepAwake(minutes: min(minutes, KeepAwake.maxMinutes))
+        }
+        return .keepAwake(minutes: nil)
+    }
+
+    private static func macTool(_ lower: String) -> AppCommand? {
+        if Rx.first(#"^(?:take\s+(?:a\s+)?|grab\s+(?:a\s+)?|make\s+(?:a\s+)?)?(?:screen\s?shot|screen\s+grab|screen\s+capture)$"#, in: lower) != nil {
+            return .open(.screenshot)
+        }
+        if Rx.first(#"^(?:copy|grab|get|extract|read)\s+(?:the\s+)?text\s+(?:from|on|off)\s+(?:the\s+|my\s+)?screen$|^ocr$|^text\s+from\s+screen$|^(?:copy|grab)\s+text$"#, in: lower) != nil {
+            return .open(.copyText)
+        }
+        if Rx.first(#"^(?:(?:open|show)\s+(?:my\s+|the\s+)?)?(?:clipboard(?:\s+history)?|paste\s+history|copy\s+history)$"#, in: lower) != nil {
+            return .open(.clipboard)
+        }
+        return pdf(lower)
+    }
+
+    private static func pdf(_ lower: String) -> AppCommand? {
+        guard lower.contains("pdf") || lower.contains("password") || lower.contains("pages") else { return nil }
+        let rules: [(String, PDFTool)] = [
+            (#"^(?:convert\s+)?(?:word|docx?|rtf|text|txt|documents?|odt|html)\s+(?:files?\s+)?(?:to|into)\s+pdfs?$|^convert\s+(?:a\s+|this\s+)?(?:file|document)?\s*to\s+pdf$|^make\s+(?:a\s+)?pdf$"#, .toPDF),
+            (#"^(?:merge|combine|join)\s+(?:my\s+|the\s+)?(?:pdfs?|pdf\s+files)(?:\s+together)?$"#, .merge),
+            (#"^(?:images?|photos?|pictures?|screenshots?|jpe?gs?|pngs?)\s+(?:to|into)\s+(?:a\s+)?pdf$"#, .images),
+            (#"^(?:split|extract\s+pages\s+from)\s+(?:a\s+|the\s+)?pdf$|^extract\s+(?:pdf\s+)?pages$"#, .split),
+            (#"^(?:compress|shrink|reduce|optimi[sz]e)\s+(?:the\s+size\s+of\s+)?(?:a\s+|the\s+)?pdfs?(?:\s+size)?$"#, .compress),
+            (#"^rotate\s+(?:a\s+|the\s+)?pdf(?:\s+pages)?$"#, .rotate),
+            (#"^(?:password[\s-]+protect|lock|encrypt|add\s+(?:a\s+)?password\s+to)\s+(?:a\s+|the\s+)?pdf$"#, .protect),
+            (#"^(?:unlock|decrypt)\s+(?:a\s+|the\s+)?pdf$|^remove\s+(?:the\s+)?(?:pdf\s+)?password(?:\s+from\s+(?:a\s+|the\s+)?pdf)?$"#, .unlock),
+            (#"^pdf\s+(?:to|into)\s+(?:images?|pngs?|jpe?gs?|pictures?)$"#, .toImages),
+            (#"^pdf\s+(?:to|into)\s+(?:text|txt)$|^(?:extract|copy|get)\s+text\s+from\s+(?:a\s+|the\s+)?pdf$"#, .toText),
+        ]
+        for (pattern, tool) in rules where Rx.first(pattern, in: lower) != nil { return .pdfTool(tool) }
+        if Rx.first(#"^(?:(?:open|show)\s+)?(?:the\s+)?pdf(?:\s+tools?)?$"#, in: lower) != nil { return .open(.pdfTools) }
         return nil
     }
 

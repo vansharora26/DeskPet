@@ -33,7 +33,7 @@ struct SessionSummaryView: View {
         VStack(spacing: 22) {
             Spacer()
             if controller.settings.showPet {
-                WorldPet(world: world, state: r.completed ? .completed : .idle, coat: pet.coat, accessory: pet.accessory,
+                WorldPet(world: world, state: r.completed ? .completed : .idle, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                          motion: controller.effectiveMotion, pixel: 5, active: controller.windowVisible)
             }
             WorldPanel(theme: theme, padding: 26) {

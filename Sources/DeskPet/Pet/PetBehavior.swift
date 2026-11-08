@@ -42,6 +42,7 @@ final class PetBehavior {
                 guard let self else { return }
                 self.pet.coat = p.isUnlocked(p.coat) ? p.coat : .ginger
                 self.pet.accessory = p.accessory.flatMap { p.isUnlocked($0) ? $0 : nil }
+                self.pet.eyeColor = p.eyeColor
             }
             .store(in: &cancellables)
     }

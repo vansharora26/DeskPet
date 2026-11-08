@@ -46,7 +46,7 @@ struct ConversationView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            CatCanvas(pose: CatPose(eyes: .open, blush: true, coat: pet.coat, accessory: pet.accessory), pixel: 2)
+            CatCanvas(pose: CatPose(eyes: .open, blush: true, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor), pixel: 2)
                 .frame(width: 48, height: 46)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
@@ -80,7 +80,7 @@ struct ConversationView: View {
         case .speaking: return "Speaking…"
         case .idle:
             if case .failed = chat.status { return "Something went wrong" }
-            return chat.aiState.isReady ? chat.aiState.label : "On-device commands · AI not set up"
+            return chat.aiState.isReady ? chat.aiState.label : "On-device commands · Claude not connected"
         }
     }
 

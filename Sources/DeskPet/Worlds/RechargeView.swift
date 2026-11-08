@@ -106,7 +106,7 @@ struct RechargeView: View {
             .frame(maxWidth: .infinity)
 
             if controller.settings.showPet {
-                WorldPet(world: world, state: state == .paused ? .idle : state, coat: pet.coat, accessory: pet.accessory,
+                WorldPet(world: world, state: state == .paused ? .idle : state, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                          motion: controller.effectiveMotion, pixel: 5, active: controller.windowVisible)
                     .padding(.leading, 70).padding(.bottom, 60)
             }

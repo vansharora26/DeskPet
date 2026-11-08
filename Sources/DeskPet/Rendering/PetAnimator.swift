@@ -10,6 +10,9 @@ enum PetMode: Equatable {
     case listening, thinking, speaking
 }
 
+/// What the roaming pet's body is doing.
+enum PetGait: Equatable { case still, walking, jumping, falling }
+
 /// One rendered frame of the pet: sprite pose plus whole-body motion.
 struct PetFrame: Equatable {
     var pose = CatPose()
@@ -19,6 +22,8 @@ struct PetFrame: Equatable {
     var stretch: CGFloat = 1
     /// Horizontal shake in sprite pixels.
     var shake: CGFloat = 0
+    /// Mirrored so the cat faces the way it's walking.
+    var facingLeft = false
 }
 
 /// Pure function of (time, state) → frame. No stored animation state, so the
@@ -34,6 +39,13 @@ enum PetAnimator {
         var animate: Bool
         var coat: CoatTheme = .ginger
         var accessory: Accessory?
+        var eyeColor: EyeColor?
+        var gait: PetGait = .still
+        var facingLeft = false
+        /// Curled up because the user stepped away (roaming nap; doesn't touch stats).
+        var napping = false
+        /// How the Mac's battery makes the cat feel.
+        var battery: BatteryMood = .none
     }
 
     static func frame(at time: TimeInterval, _ input: Input) -> PetFrame {
@@ -43,12 +55,42 @@ enum PetAnimator {
         var f = PetFrame()
         f.pose.coat = input.coat
         f.pose.accessory = input.accessory
+        f.pose.eyeColor = input.eyeColor
         f.pose.headband = input.mode == .focused
+        f.facingLeft = input.facingLeft
 
-        if input.sleeping {
+        if input.sleeping || input.napping {
             f.pose.eyes = .closed
             f.pose.tailFrame = 0
             return f
+        }
+
+        let drained = input.battery.isDrained
+        switch input.gait {
+        case .walking:
+            // Tired cats trudge: slower steps, barely lifting, droopy face.
+            let step = drained ? 0.27 : 0.16
+            f.pose.pawStep = Int(t / step) % 2 + 1
+            f.hop = abs(sin(t * .pi / (step * 2))) * (drained ? 0.25 : 0.7)
+            f.pose.tailFrame = Int(t / (step * 2)) % 2
+            f.pose.eyes = isBlinking(t) ? .blink : (drained ? .sleepy : .open)
+            if drained {
+                f.pose.sad = true
+                f.pose.earDroop = input.battery == .critical ? 1 : 0.55
+            }
+            return f
+        case .jumping:
+            f.pose.eyes = .happy
+            f.pose.mouthOpen = true
+            f.stretch = 1.05
+            return f
+        case .falling:
+            f.pose.eyes = .open
+            f.pose.mouthOpen = true
+            f.stretch = 1.04
+            return f
+        case .still:
+            break
         }
 
         switch input.reaction {
@@ -128,8 +170,16 @@ enum PetAnimator {
             case .none:
                 break
             }
-            f.pose.tailFrame = Int(t / (input.mood == .hungry ? 1.4 : 0.7)) % 2
-            switch input.mood {
+            if let tired = batteryFrame(f, t: t, input) { return tired }
+            // Charging perks the cat up: ignore tired/sad pet stats meanwhile.
+            let mood: PetMood = input.battery == .charging && (input.mood == .tired || input.mood == .sad) ? .content : input.mood
+            f.pose.tailFrame = Int(t / (mood == .hungry ? 1.4 : 0.7)) % 2
+            if input.battery == .charging {
+                f.pose.blush = true
+                // A happy squint now and then while it charges.
+                if input.animate && t.truncatingRemainder(dividingBy: 6) < 0.9 { f.pose.eyes = .happy; return f }
+            }
+            switch mood {
             case .tired:
                 f.pose.eyes = .sleepy
             default:
@@ -137,15 +187,51 @@ enum PetAnimator {
             }
             if input.hovered {
                 f.pose.blush = true
-                if input.mood != .tired && !isBlinking(t) { f.pose.eyes = .open }
+                if mood != .tired && !isBlinking(t) { f.pose.eyes = .open }
             }
-            if input.mood == .happy && input.animate {
+            if mood == .happy && input.animate {
                 // A contented little hop now and then.
                 let p = t.truncatingRemainder(dividingBy: 9)
                 if p < 0.35 { f.hop = sin(p / 0.35 * .pi) * 2; f.pose.eyes = .happy }
             }
         }
         return f
+    }
+
+    /// Low battery: sad and lazy. Critical: exhausted, nodding off. nil when the battery is fine.
+    static func batteryFrame(_ base: PetFrame, t: TimeInterval, _ input: Input) -> PetFrame? {
+        var f = base
+        switch input.battery {
+        case .low:
+            f.pose.sad = true
+            f.pose.earDroop = 0.55
+            f.pose.eyes = isBlinking(t) ? .blink : .sleepy
+            f.pose.tailFrame = Int(t / 2.6) % 2                       // lazy tail
+            f.stretch = 0.955 + (input.animate ? sin(t * 1.2) * 0.01 : 0) // slouched, slow breaths
+            if input.animate {
+                // A big yawn every 12 s.
+                let p = t.truncatingRemainder(dividingBy: 12)
+                if p < 1.5 {
+                    f.pose.eyes = .closed
+                    f.pose.mouthOpen = true
+                    f.stretch = 0.955 + 0.05 * sin(p / 1.5 * .pi)
+                }
+            }
+            if input.hovered && !f.pose.mouthOpen { f.pose.eyes = .sleepy }
+            return f
+        case .critical:
+            f.pose.sad = true
+            f.pose.earDroop = 1
+            f.pose.tailFrame = 0                                       // too tired to wag
+            f.stretch = 0.91 + (input.animate ? sin(t * 0.9) * 0.012 : 0) // slumped
+            // Nodding off: eyes drift shut for a couple of seconds, then jolt half-open.
+            let p = input.animate ? t.truncatingRemainder(dividingBy: 7) : 0
+            f.pose.eyes = p > 4.6 ? .closed : .sleepy
+            if p > 4.6 { f.stretch -= 0.015 }
+            return f
+        default:
+            return nil
+        }
     }
 
     /// Natural-looking blinks: one every ~4.3 s, a double blink every third time.

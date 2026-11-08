@@ -70,7 +70,9 @@ echo "    License keys: $DESKPET_DODO_ENV"
 
 # --- Sign with Developer ID + hardened runtime ----------------------------
 # Hardened runtime is required for notarization. The app isn't sandboxed, so
-# the only entitlement needed is microphone access for push-to-talk.
+# the entitlements are just the protected resources it asks for: the microphone
+# (push-to-talk), Apple Events (reading the current browser tab's address for the
+# distraction guard) and Calendars (meeting heads-up).
 echo "==> Signing with Developer ID (hardened runtime)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -80,6 +82,8 @@ cat > "$WORK/DeskPet.entitlements" <<'PLIST'
 <plist version="1.0">
 <dict>
     <key>com.apple.security.device.audio-input</key> <true/>
+    <key>com.apple.security.automation.apple-events</key> <true/>
+    <key>com.apple.security.personal-information.calendars</key> <true/>
 </dict>
 </plist>
 PLIST

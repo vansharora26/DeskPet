@@ -27,6 +27,8 @@ final class PetAnimationDriver: ObservableObject {
             pet.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             windowState.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             settings.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            BatteryMonitor.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            MacTools.shared.keepAwake.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             NSWorkspace.shared.notificationCenter
                 .publisher(for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)
                 .map { _ in () }.eraseToAnyPublisher()
@@ -43,10 +45,12 @@ final class PetAnimationDriver: ObservableObject {
     /// Frame rate for the current activity; 0 means no timer needed.
     private var desiredFPS: Double {
         guard animate, windowState.isVisible else { return 0 }
+        if windowState.gait != .still { return 20 } // walking paws, jump arcs
         if pet.reaction != nil { return 15 }  // hops, hearts, chewing
-        if pet.isSleeping { return 10 }       // drifting z's
+        if pet.isSleeping || windowState.napping { return 10 } // drifting z's
         if pet.mode == .speaking || pet.mode == .listening { return 12 } // lip movement, sound waves
         if pet.mode == .thirsty || pet.mode == .resting || pet.mode == .thinking { return 8 } // droplet, steam, dots
+        if BatteryMonitor.shared.effectiveMood == .charging { return 8 } // bobbing bolt (on AC power anyway)
         return 6                              // blinks & tail swish (blinks outlast a frame)
     }
 
@@ -77,12 +81,16 @@ final class PetAnimationDriver: ObservableObject {
         let frame = PetAnimator.frame(at: t, .init(
             reaction: pet.reaction, reactionAge: age, sleeping: pet.isSleeping,
             mood: pet.stats.mood, mode: pet.mode, hovered: windowState.isHovered, animate: animate,
-            coat: pet.coat, accessory: pet.accessory))
+            coat: pet.coat,
+            // Sunglasses while it's keeping the Mac awake.
+            accessory: MacTools.shared.keepAwake.isActive ? .sunglasses : pet.accessory, eyeColor: pet.eyeColor,
+            gait: windowState.gait, facingLeft: windowState.facingLeft, napping: windowState.napping,
+            battery: BatteryMonitor.shared.effectiveMood))
 
         let props: PetStage.Props
         let a = animate ? age : 0.4
         let loop = animate ? t : 0
-        if pet.isSleeping {
+        if pet.isSleeping || windowState.napping {
             props = .sleeping(t: loop)
         } else {
             switch pet.reaction {
@@ -97,6 +105,12 @@ final class PetAnimationDriver: ObservableObject {
                 case .resting: props = .mug(t: loop)
                 case .listening: props = .listening(t: loop)
                 case .thinking: props = .thinking(t: loop)
+                case .none:
+                    switch BatteryMonitor.shared.effectiveMood {
+                    case .charging: props = .charging(t: loop)
+                    case .critical: props = .lowBattery(t: loop)
+                    default: props = .none
+                    }
                 default: props = .none
                 }
             }

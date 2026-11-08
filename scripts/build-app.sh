@@ -13,7 +13,7 @@ set -euo pipefail
 CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/DeskPet.app"
-VERSION="2.3.0"
+VERSION="2.4.0"
 DODO_ENV="${DESKPET_DODO_ENV:-test_mode}"
 BUY_URL="${DESKPET_BUY_URL:-https://deskpet.app}"
 [[ "$DODO_ENV" == "test_mode" || "$DODO_ENV" == "live_mode" ]] || { echo "DESKPET_DODO_ENV must be test_mode or live_mode" >&2; exit 1; }
@@ -60,6 +60,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>DeskPet uses the microphone only while you hold or tap the talk button (or the push-to-talk shortcut), so you can talk to your pet instead of typing. It never listens in the background, and DeskPet doesn’t save recordings.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>DeskPet turns what you say into text so your pet can understand it and reply. By default this happens entirely on your Mac. Only if you turn off “Keep speech recognition on this Mac” in Settings › Voice may Apple’s speech service process it instead.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>During a focus session, DeskPet’s distraction guard asks your browser for the address of the current tab, only to check it against the sites you listed. It isn’t saved or sent anywhere.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>DeskPet reads your upcoming events so your pet can give you a heads-up before meetings and list them in your Today briefing. Your calendar stays on your Mac and is never changed.</string>
 </dict>
 </plist>
 PLIST

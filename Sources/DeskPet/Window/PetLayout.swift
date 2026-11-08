@@ -8,7 +8,7 @@ struct PetLayout: Equatable {
     static let bubbleHeight: CGFloat = 96   // room for a 2-line callout with buttons
     static let gap: CGFloat = 4
     static let barHeight: CGFloat = 34
-    static let barWidth: CGFloat = 222
+    static let barWidth: CGFloat = 234
 
     /// Headroom above the cat so the biggest hop (5 sprite px) never reaches the bubble.
     var hopRoom: CGFloat { (pixel * 5 + 4).rounded() }
@@ -17,9 +17,20 @@ struct PetLayout: Equatable {
         CGSize(width: CGFloat(CatSprite.width) * pixel, height: CGFloat(CatSprite.height) * pixel)
     }
 
+    // Hover spread: labelled pills that fly out of the cat into columns beside it.
+    static let pillSize = CGSize(width: 118, height: 26)
+    static let pillSpacing: CGFloat = 6
+    /// How far the middle of each column bows outward, so the columns hug the cat.
+    static let pillBulge: CGFloat = 10
+    /// Gap from the body centre to the inner edge of a column (clears the tail on either side).
+    var pillClearance: CGFloat { 15 * pixel + 2 }
+
+    /// Speech bubbles keep their old width even though the window is wider.
+    static let bubbleMaxWidth: CGFloat = 228
+
     var windowSize: CGSize {
         CGSize(
-            width: max(240, catSize.width + 48),
+            width: max(240, 2 * (pillClearance + Self.pillBulge + Self.pillSize.width) + 8),
             height: Self.bubbleHeight + hopRoom + catSize.height + Self.gap + Self.barHeight
         )
     }
@@ -48,6 +59,51 @@ struct PetLayout: Equatable {
         ]
     }
 
+    /// The body's centre point (not the tail).
+    var bodyCenter: CGPoint {
+        CGPoint(x: catOrigin.x + 9 * pixel, y: catOrigin.y + (CGFloat(CatSprite.top) + 9.5) * pixel)
+    }
+
+    /// Where each spread pill sits once fully out. `.split` puts the first half on the
+    /// left and the rest on the right; one-sided modes stack everything in one column.
+    func spreadFrames(count: Int, mode: SpreadMode) -> [CGRect] {
+        let w = Self.pillSize.width, h = Self.pillSize.height
+        func column(_ n: Int, side: CGFloat, spacing: CGFloat, top: CGFloat) -> [CGRect] {
+            (0..<n).map { i in
+                let bow = n > 1 ? Self.pillBulge * sin(.pi * (CGFloat(i) + 0.5) / CGFloat(n)) : Self.pillBulge
+                let inner = bodyCenter.x + side * (pillClearance + bow)
+                let x = side < 0 ? inner - w : inner
+                return CGRect(x: x.rounded(), y: (top + CGFloat(i) * (h + spacing)).rounded(), width: w, height: h)
+            }
+        }
+        switch mode {
+        case .split:
+            let left = (count + 1) / 2, right = count - left
+            let colHeight = CGFloat(max(left, right)) * (h + Self.pillSpacing) - Self.pillSpacing
+            let top = bodyCenter.y - colHeight / 2
+            return column(left, side: -1, spacing: Self.pillSpacing, top: top)
+                + column(right, side: 1, spacing: Self.pillSpacing, top: top)
+        case .leftOnly, .rightOnly:
+            let spacing: CGFloat = 3
+            let colHeight = CGFloat(count) * (h + spacing) - spacing
+            let top = max(4, catFrame.maxY + Self.gap - colHeight)
+            return column(count, side: mode == .leftOnly ? -1 : 1, spacing: spacing, top: top)
+        }
+    }
+
+    /// Moves the speech bubble clear of a one-sided column while the spread is open.
+    func bubbleShift(for mode: SpreadMode) -> CGFloat {
+        let overlap = Self.bubbleMaxWidth / 2 - pillClearance + 6
+        switch mode {
+        case .split: return 0
+        case .rightOnly: return -max(0, overlap)
+        case .leftOnly: return max(0, overlap)
+        }
+    }
+
+    /// Room a column needs beside the cat, used to pick a spread mode near screen edges.
+    var spreadSideRoom: CGFloat { pillClearance + Self.pillBulge + Self.pillSize.width - 9 * pixel }
+
     var barFrame: CGRect {
         CGRect(
             x: (windowSize.width - Self.barWidth) / 2,
@@ -57,3 +113,6 @@ struct PetLayout: Equatable {
         )
     }
 }
+
+/// Which side(s) of the cat the hover spread opens to.
+enum SpreadMode: Equatable { case split, leftOnly, rightOnly }

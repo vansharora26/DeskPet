@@ -5,13 +5,16 @@ import Foundation
 /// Features that need a license once the free trial ends. Everything else —
 /// the pet, water, the focus timer, notes, tasks, reminders — is always free.
 public enum PremiumFeature: String, CaseIterable, Sendable {
-    case focusWorlds, aiChat, voice
+    case focusWorlds, aiChat, voice, roaming, distractionGuard, calendar
 
     public var title: String {
         switch self {
         case .focusWorlds: return "Focus Worlds"
         case .aiChat: return "AI chat"
         case .voice: return "Voice conversation"
+        case .roaming: return "Roaming pet"
+        case .distractionGuard: return "Distraction guard"
+        case .calendar: return "Calendar heads-up"
         }
     }
 }

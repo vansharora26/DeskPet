@@ -3,6 +3,9 @@ import AVFoundation
 import DeskPetCore
 import Foundation
 import Speech
+import SwiftUI
+import IOKit.pwr_mgt
+import PDFKit
 
 /// `DeskPet --self-test`: exercises the real app layer (AppModel, CommandExecutor,
 /// AI tool validation, export, delete) against a temporary data folder, without
@@ -220,6 +223,10 @@ enum SelfTest {
 
         // Text editing: ⌘V reaches text fields (incl. the secure API-key field) via the main menu.
         checkPaste()
+        checkQuickCapture(dir: dir)
+        checkMacTools(dir: dir)
+        checkPDFTools(dir: dir)
+        checkBattery()
 
         // Export & delete.
         do {
@@ -330,6 +337,245 @@ enum SelfTest {
         let viaPanel = MainMenu.handleEditShortcut(event, in: window)
         check("edit: panel fallback also pastes", viaPanel && field.stringValue == "sk-ant-selftest-0000")
         window.orderOut(nil)
+    }
+
+    /// Mac tools: on-device text recognition, keep-awake assertion, clipboard history, screenshot files.
+    private static func checkMacTools(dir: URL) {
+        // Text recognition on a rendered image.
+        let img = NSImage(size: NSSize(width: 900, height: 220), flipped: false) { r in
+            NSColor.white.setFill(); r.fill()
+            ("DeskPet reads text 42" as NSString).draw(at: NSPoint(x: 40, y: 80), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 56, weight: .medium), .foregroundColor: NSColor.black])
+            return true
+        }
+        let png = dir.appendingPathComponent("ocr.png")
+        if let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+           let data = rep.representation(using: .png, properties: [:]) { try? data.write(to: png) }
+        var text: String?
+        Task { text = (try? await MacTools.recognizeText(in: png)) ?? "" }
+        let deadline = Date().addingTimeInterval(20)
+        while text == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        check("tools: copy text recognises on-screen text", text?.contains("DeskPet") == true && text?.contains("42") == true,
+              text.map { String(reflecting: $0) } ?? "timed out")
+
+        // Keep awake holds a real power assertion and releases it.
+        let awake = KeepAwakeController()
+        var ended: KeepAwakeController.EndReason?
+        awake.onEnded = { ended = $0 }
+        let started = awake.start(minutes: 30)
+        check("tools: keep awake starts with a timer", started && awake.isActive && awake.endsAt != nil
+              && awake.statusText?.contains("min left") == true, awake.statusText ?? "")
+        check("tools: keep awake assertion is registered", Self.hasAssertion(named: "DeskPet keep awake"))
+        awake.stop(reason: .user)
+        check("tools: keep awake turns off", !awake.isActive && ended == .user && !Self.hasAssertion(named: "DeskPet keep awake"))
+
+        // Clipboard history (user's clipboard saved and restored).
+        let pb = NSPasteboard.general
+        let saved: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        }
+        defer { pb.clearContents(); if !saved.isEmpty { pb.writeObjects(saved) } }
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "DeskPetClipTest-\(UUID().uuidString)")!)
+        let clipURL = dir.appendingPathComponent("clipboard.json")
+        let monitor = ClipboardMonitor(fileURL: clipURL, settings: settings)
+        pb.clearContents(); pb.setString("ignored while off", forType: .string)
+        monitor.poll()
+        settings.clipboardHistoryEnabled = true
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        pb.clearContents(); pb.setString("selftest clip one", forType: .string)
+        monitor.poll()
+        let secret = NSPasteboardItem()
+        secret.setString("hunter2", forType: .string)
+        secret.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        pb.clearContents(); pb.writeObjects([secret])
+        monitor.poll()
+        check("tools: clipboard history records copies, not passwords or pre-existing ones",
+              monitor.history.entries.map(\.text) == ["selftest clip one"], "\(monitor.history.entries.map(\.text))")
+        let perms = (try? FileManager.default.attributesOfItem(atPath: clipURL.path)[.posixPermissions] as? Int) ?? nil
+        let reloaded = ClipboardMonitor(fileURL: clipURL, settings: settings)
+        check("tools: clipboard history persists privately", reloaded.history == monitor.history && perms == 0o600,
+              "perms=\(perms.map { String($0, radix: 8) } ?? "-")")
+        if let e = monitor.history.entries.first {
+            pb.clearContents(); pb.setString("something else", forType: .string)
+            monitor.copy(e)
+            check("tools: choosing an entry puts it back on the clipboard", pb.string(forType: .string) == "selftest clip one")
+        }
+        monitor.clear()
+        check("tools: clear removes history and file", monitor.history.entries.isEmpty && !FileManager.default.fileExists(atPath: clipURL.path))
+        settings.clipboardHistoryEnabled = false
+
+        // Screenshot files get unique, dated names.
+        let shots = dir.appendingPathComponent("shots")
+        let when = Date(timeIntervalSince1970: 1_800_000_000)
+        var names: [String] = []
+        for _ in 0..<2 {
+            let tmp = dir.appendingPathComponent("\(UUID().uuidString).png")
+            try? Data([0x89]).write(to: tmp)
+            if let u = try? MacTools.moveToScreenshotsFolder(tmp, now: when, folder: shots) { names.append(u.lastPathComponent) }
+        }
+        check("tools: screenshots saved with unique dated names", names.count == 2 && names[0].hasPrefix("Screenshot ")
+              && names[1].hasSuffix(" (2).png"), names.joined(separator: ", "))
+        check("tools: screenshot PNG can be copied as an image",
+              MacTools.copyImage((try? Data(contentsOf: png)) ?? Data()) && pb.data(forType: .png) != nil)
+    }
+
+    /// PDF tools end-to-end on real files: Word → PDF, merge, images, split, rotate,
+    /// compress, password lock/unlock, PDF → images and text.
+    private static func checkPDFTools(dir: URL) {
+        let folder = dir.appendingPathComponent("pdf")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // A real .docx written by AppKit, long enough for several pages.
+        let body = NSMutableAttributedString(string: "Quarterly Report\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 24)])
+        for i in 1...120 {
+            body.append(NSAttributedString(string: "Paragraph \(i): DeskPet converts Word documents to PDF on this Mac.\n",
+                                           attributes: [.font: NSFont.systemFont(ofSize: 13)]))
+        }
+        let docx = folder.appendingPathComponent("Report.docx")
+        if let data = try? body.data(from: NSRange(location: 0, length: body.length),
+                                     documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML]) {
+            try? data.write(to: docx)
+        }
+        let txt = folder.appendingPathComponent("Notes.txt")
+        try? "Plain text notes\nSecond line".write(to: txt, atomically: true, encoding: .utf8)
+
+        func run(_ name: String, _ work: () throws -> PDFEngine.Output) -> PDFEngine.Output? {
+            do { return try work() } catch {
+                check("pdf: \(name)", false, (error as? LocalizedError)?.errorDescription ?? "\(error)")
+                return nil
+            }
+        }
+        func pages(_ url: URL?) -> Int { url.flatMap { PDFDocument(url: $0)?.pageCount } ?? -1 }
+
+        let converted = run("Word to PDF") { try PDFEngine.convertToPDF([docx, txt]) }
+        let reportPDF = converted?.urls.first
+        let notesPDF = converted?.urls.last
+        let reportText = reportPDF.flatMap { PDFDocument(url: $0)?.string } ?? ""
+        check("pdf: Word (.docx) and text convert to paginated PDFs",
+              pages(reportPDF) >= 2 && pages(notesPDF) == 1 && reportText.contains("Paragraph 120")
+              && reportPDF?.lastPathComponent == "Report.pdf",
+              "report pages=\(pages(reportPDF)) notes pages=\(pages(notesPDF))")
+
+        if let a = reportPDF, let b = notesPDF {
+            let merged = run("merge") { try PDFEngine.merge([a, b]) }?.urls.first
+            check("pdf: merge keeps every page in order", pages(merged) == pages(a) + 1
+                  && merged?.lastPathComponent == "Report (merged).pdf"
+                  && (PDFDocument(url: merged!)?.page(at: pages(a))?.string ?? "").contains("Plain text notes"))
+
+            let split = run("split") { try PDFEngine.split(a, ranges: "2, 1", eachPage: false) }?.urls.first
+            check("pdf: extract pages in the order asked", pages(split) == 2
+                  && (PDFDocument(url: split!)?.page(at: 1)?.string ?? "").contains("Quarterly Report"))
+            let each = run("split each") { try PDFEngine.split(a, ranges: "1-2", eachPage: true) }
+            check("pdf: split into one file per page", each?.urls.count == 2 && each?.urls.allSatisfy { pages($0) == 1 } == true)
+
+            let rotated = run("rotate") { try PDFEngine.rotate([a], degrees: -90, ranges: "1") }?.urls.first
+            let rDoc = rotated.flatMap { PDFDocument(url: $0) }
+            check("pdf: rotate only the chosen pages", rDoc?.page(at: 0)?.rotation == 270 && rDoc?.page(at: 1)?.rotation == 0)
+
+            let locked = run("protect") { try PDFEngine.protect([b], password: "s3cret") }?.urls.first
+            let lockedDoc = locked.flatMap { PDFDocument(url: $0) }
+            check("pdf: password lock needs the password", lockedDoc?.isLocked == true && lockedDoc?.unlock(withPassword: "s3cret") == true)
+            if let locked {
+                var wrong = false
+                do { _ = try PDFEngine.unlock([locked], password: "nope") } catch { wrong = true }
+                let unlocked = run("unlock") { try PDFEngine.unlock([locked], password: "s3cret") }?.urls.first
+                let u = unlocked.flatMap { PDFDocument(url: $0) }
+                check("pdf: wrong password refused, right one saves an open copy", wrong && u?.isLocked == false && u?.isEncrypted == false
+                      && (u?.string ?? "").contains("Plain text notes"))
+                var refused = false
+                do { _ = try PDFEngine.merge([locked, a]) } catch { refused = true }
+                check("pdf: locked PDFs are explained, not silently skipped", refused)
+            }
+
+            let images = run("to images") { try PDFEngine.toImages([b]) }
+            let pngs = images.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.urls[0].path) } ?? []
+            check("pdf: pages saved as PNG images", pngs == ["Page 1.png"], pngs.joined(separator: ","))
+
+            let text = run("to text") { try PDFEngine.toText([a]) }?.urls.first
+            let saved = text.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+            check("pdf: text extracted and copied", saved.contains("Paragraph 7") && text?.pathExtension == "txt")
+        }
+
+        // Images → PDF, then compress a PDF with a big photo in it.
+        let photo = folder.appendingPathComponent("Photo.png")
+        let img = NSImage(size: NSSize(width: 1600, height: 1200), flipped: false) { r in
+            for i in 0..<240 {
+                NSColor(hue: CGFloat(i) / 240, saturation: 0.8, brightness: 0.9, alpha: 1).setFill()
+                NSRect(x: CGFloat(i) * r.width / 240, y: 0, width: r.width / 240 + 1, height: r.height).fill()
+            }
+            return true
+        }
+        if let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
+            try? rep.representation(using: .png, properties: [:])?.write(to: photo)
+        }
+        let album = run("images") { try PDFEngine.imagesToPDF([photo, photo]) }?.urls.first
+        let first = album.flatMap { PDFDocument(url: $0)?.page(at: 0)?.bounds(for: .mediaBox) }
+        check("pdf: images become landscape A4 pages", pages(album) == 2 && first?.width == 842 && first?.height == 595)
+        // A "scanned" PDF: a lossless bitmap drawn straight into a PDF context.
+        let scan = folder.appendingPathComponent("Scan.pdf")
+        var box = CGRect(x: 0, y: 0, width: 595, height: 842)
+        if let ctx = CGContext(scan as CFURL, mediaBox: &box, nil),
+           let cg = NSBitmapImageRep(data: (try? Data(contentsOf: photo)) ?? Data())?.cgImage {
+            ctx.beginPDFPage(nil)
+            ctx.draw(cg, in: box)
+            ctx.endPDFPage()
+            ctx.closePDF()
+        }
+        let small = run("compress") { try PDFEngine.compress([scan]) }
+        if let out = small?.urls.first {
+            check("pdf: compress makes a scanned PDF smaller", PDFEngine.fileSize(out) < PDFEngine.fileSize(scan) && pages(out) == 1,
+                  small?.message ?? "")
+        }
+    }
+
+    private static func checkBattery() {
+        let r = BatteryMonitor.read()
+        check("battery: reading is sane (or none on a desktop Mac)", r == nil || (0...100).contains(r!.level),
+              r.map { "\($0.level)% \($0.isCharging ? "charging" : $0.isPluggedIn ? "on AC" : "on battery") → \(BatteryMood.of($0))" } ?? "no battery")
+    }
+
+    private static func hasAssertion(named name: String) -> Bool {
+        var dict: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&dict) == kIOReturnSuccess,
+              let byPid = dict?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return false }
+        let mine = byPid[NSNumber(value: ProcessInfo.processInfo.processIdentifier)] ?? []
+        return mine.contains { ($0[kIOPMAssertionNameKey as String] as? String) == name }
+    }
+
+    /// Quick capture: the real panel + view, typed into with real key events, saves a note.
+    private static func checkQuickCapture(dir: URL) {
+        let model = AppModel(store: JSONDocumentStore(fileURL: dir.appendingPathComponent("capture.json")))
+        let before = model.data.items.items.count
+        let panel = InputPanel()
+        var closed = false
+        let view = QuickCaptureView(model: model, onClose: { [weak panel] in panel?.close() })
+        let host = NSHostingView(rootView: view)
+        host.sizingOptions = [.preferredContentSize]
+        panel.contentView = host
+        panel.setContentSize(host.fittingSize)
+        panel.onClose = { closed = true }
+        panel.present()
+        func pump(_ s: Double) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        pump(0.5)
+        check("capture: panel has keyboard focus once open", panel.isKeyWindow && panel.firstResponder is NSTextView,
+              "key=\(panel.isKeyWindow) responder=\(panel.firstResponder.map { String(describing: type(of: $0)) } ?? "nil")")
+        func key(_ c: String, code: UInt16) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: panel.windowNumber, context: nil, characters: c,
+                                         charactersIgnoringModifiers: c, isARepeat: false, keyCode: code)!
+                panel.sendEvent(e)
+            }
+            pump(0.05)
+        }
+        for ch in "buy milk" { key(String(ch), code: 0) }
+        key("\r", code: 36)
+        pump(1.2)
+        let items = model.data.items.items
+        check("capture: typing + Return saves a note", items.count == before + 1 && items.last?.text == "buy milk",
+              "items=\(items.count - before) text=\(items.last.map { String(reflecting: $0.text) } ?? "-") closed=\(closed)")
+        panel.close()
     }
 
     /// Focus Worlds: one shared timer, honest records, no duplicates, restart-safe, opt-in audio.

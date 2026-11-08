@@ -33,6 +33,7 @@ final class PetViewModel: ObservableObject {
     @Published var mode: PetMode = .none
     @Published var coat: CoatTheme = .ginger
     @Published var accessory: Accessory?
+    @Published var eyeColor: EyeColor?
     /// An actionable bubble (reminder, phase change). Takes priority over speech.
     @Published private(set) var callout: PetCallout?
     private var calloutQueue: [PetCallout] = []

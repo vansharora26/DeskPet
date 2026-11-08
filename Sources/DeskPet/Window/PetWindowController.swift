@@ -17,6 +17,14 @@ final class PetWindowState: ObservableObject {
     var badgeVisible = false
     /// Keyboard mode: the pet panel may become key so arrows/space work.
     @Published var keyboardMode = false
+    /// Roaming: what the body is doing, which way it faces, and whether it's napping.
+    @Published var gait: PetGait = .still
+    @Published var facingLeft = false
+    @Published var napping = false
+    /// Hover spread layout, chosen when the hover starts (depends on room on screen).
+    @Published var spread: SpreadMode = .split
+    /// Number of pills in the spread (set by the view).
+    var spreadCount = 8
 
     init(layout: PetLayout) { self.layout = layout }
 }
@@ -147,7 +155,7 @@ final class PetWindowController {
     }
 
     /// Cat's rectangle in screen coordinates.
-    private func catScreenRect(for frame: NSRect) -> NSRect {
+    fileprivate func catScreenRect(for frame: NSRect) -> NSRect {
         let cat = state.layout.catFrame
         return NSRect(x: frame.minX + cat.minX, y: frame.maxY - cat.maxY, width: cat.width, height: cat.height)
     }
@@ -182,6 +190,32 @@ final class PetWindowController {
         settings.savedWindowOrigin = panel.frame.origin
     }
 
+    // MARK: - Roaming support
+
+    /// Body-centre x and feet y of the cat, in screen coordinates.
+    var catFoot: CGPoint {
+        let f = panel.frame, layout = state.layout
+        return CGPoint(x: f.minX + layout.catOrigin.x + catHalfWidth, y: f.maxY - layout.catFrame.maxY)
+    }
+
+    var catHalfWidth: CGFloat { 9 * state.layout.pixel }
+    var catHeight: CGFloat { state.layout.catSize.height }
+
+    /// Moves the window so the cat's feet are at `p` (no clamping; the roamer stays on screen).
+    func moveCat(footAt p: CGPoint) {
+        let layout = state.layout
+        panel.setFrameOrigin(NSPoint(x: (p.x - layout.catOrigin.x - catHalfWidth).rounded(),
+                                     y: (p.y - (layout.windowSize.height - layout.catFrame.maxY)).rounded()))
+    }
+
+    /// The screen the cat is (mostly) on.
+    var catScreen: NSScreen? {
+        let cat = catScreenRect(for: panel.frame)
+        return NSScreen.screens.max { $0.frame.intersection(cat).area < $1.frame.intersection(cat).area }
+    }
+
+    func savePosition() { saveOrigin() }
+
     static func defaultOrigin(for size: CGSize) -> NSPoint {
         let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -215,17 +249,43 @@ final class PetWindowController {
         let p = CGPoint(x: mouse.x - f.minX, y: f.maxY - mouse.y) // window-local, top-left origin
         let layout = state.layout
 
-        let overCat = f.contains(mouse) && layout.catHitRects.contains { $0.contains(p) }
-        let overBar = (state.isHovered || state.badgeVisible) && layout.barFrame.insetBy(dx: -4, dy: -4).contains(p)
+        // When the cat faces left (roaming), its tail is on the other side.
+        let axis = layout.catOrigin.x + catHalfWidth
+        let hitRects = state.facingLeft
+            ? layout.catHitRects.map { CGRect(x: 2 * axis - $0.maxX, y: $0.minY, width: $0.width, height: $0.height) }
+            : layout.catHitRects
+        let overCat = f.contains(mouse) && hitRects.contains { $0.contains(p) }
+        let overSpread = state.isHovered && !state.isDragging
+            && layout.spreadFrames(count: state.spreadCount, mode: state.spread).contains { $0.insetBy(dx: -4, dy: -3).contains(p) }
+        let overBadge = !state.isHovered && state.badgeVisible && layout.barFrame.insetBy(dx: -4, dy: -4).contains(p)
+        let overBar = overSpread || overBadge
         let overCallout = state.calloutFrame.map { $0.insetBy(dx: -2, dy: -2).contains(p) } ?? false
         let now = Date()
         if overCat || overBar { lastInsideAt = now }
 
         let hovered = overCat || overBar || state.isDragging || now.timeIntervalSince(lastInsideAt) < Self.hoverLinger
+        if hovered && !state.isHovered { state.spread = spreadMode() }
         if state.isHovered != hovered { state.isHovered = hovered }
 
         let interactive = overCat || overBar || overCallout || state.isDragging || state.keyboardMode
         if panel.ignoresMouseEvents == interactive { panel.ignoresMouseEvents = !interactive }
+    }
+}
+
+extension PetWindowController {
+    /// Both sides when there's room; otherwise one column on the side that has it.
+    fileprivate func spreadMode() -> SpreadMode {
+        guard let visible = catScreen?.visibleFrame else { return .split }
+        let cat = catScreenRect(for: panel.frame)
+        let body = cat.minX + 9 * state.layout.pixel
+        let need = state.layout.spreadSideRoom + 9 * state.layout.pixel
+        let leftOK = body - need >= visible.minX
+        let rightOK = body + need <= visible.maxX
+        switch (leftOK, rightOK) {
+        case (true, true), (false, false): return .split
+        case (false, true): return .rightOnly
+        case (true, false): return .leftOnly
+        }
     }
 }
 

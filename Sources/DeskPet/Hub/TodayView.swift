@@ -1,17 +1,18 @@
 import DeskPetCore
 import SwiftUI
 
-/// Daily briefing + end-of-day summary, built only from local data.
-/// (No calendar integration: DeskPet never claims to know your events.)
+/// Daily briefing + end-of-day summary, built from local data — plus today's
+/// meetings when the user turned on Calendar heads-up (read-only).
 struct TodayView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var hub: HubState
     @ObservedObject var pet: PetViewModel
+    @ObservedObject var calendarService = CalendarService.shared
     var enterFocusWorld: () -> Void = {}
 
     var body: some View {
         let cal = model.calendar
-        let b = Briefing.build(model.data, now: model.now, calendar: cal)
+        let b = Briefing.build(model.data, now: model.now, calendar: cal, events: calendarService.events)
         let showWrapUp = model.data.briefing.endOfDayEnabled
             && cal.minuteOfDay(model.now) >= model.data.briefing.endOfDayMinute
 
@@ -89,6 +90,25 @@ struct TodayView: View {
                     }
                 }
 
+                if !b.meetings.isEmpty {
+                    Card {
+                        SectionTitle(text: "Schedule", symbol: "calendar", tint: DP.water)
+                        ForEach(b.meetings.prefix(6)) { event in
+                            HStack(spacing: 8) {
+                                Text(event.isAllDay ? "All day" : event.start.formatted(date: .omitted, time: .shortened))
+                                    .font(DP.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                    .frame(width: 62, alignment: .leading)
+                                Text(event.title).font(DP.body).lineLimit(1)
+                                    .foregroundStyle(event.start <= model.now && !event.isAllDay ? DP.accent : .primary)
+                                Spacer()
+                                if let url = event.joinURL, !event.isAllDay {
+                                    Button("Join") { NSWorkspace.shared.open(url) }.buttonStyle(PillButtonStyle(filled: false))
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Card {
                     SectionTitle(text: "Due today", symbol: "checklist", tint: DP.mint,
                                  trailing: AnyView(Button("All tasks") { hub.showNotes = false; hub.taskFilter = .today; hub.tab = .tasks }
@@ -131,8 +151,10 @@ struct TodayView: View {
                     }
                 }
 
-                Text("DeskPet doesn’t read your calendar. Add deadlines to tasks to see them here.")
-                    .font(DP.caption).foregroundStyle(.tertiary)
+                if !calendarService.isActive {
+                    Text("Turn on Calendar heads-up in Settings › General to see your meetings here.")
+                        .font(DP.caption).foregroundStyle(.tertiary)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)

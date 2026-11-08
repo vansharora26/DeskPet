@@ -98,8 +98,10 @@ public struct Briefing: Equatable, Sendable {
     public var breaks: Int
     public var completedToday: [Item]
     public var suggestion: String
+    /// The rest of today's calendar (empty unless Calendar heads-up is on).
+    public var meetings: [CalendarEvent] = []
 
-    public static func build(_ data: DeskPetData, now: Date, calendar: Calendar) -> Briefing {
+    public static func build(_ data: DeskPetData, now: Date, calendar: Calendar, events: [CalendarEvent] = []) -> Briefing {
         let today = data.items.tasks(.today, now: now, calendar: calendar)
         let overdue = data.items.overdue(now: now, calendar: calendar)
         let weekAhead = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: now)) ?? now
@@ -112,7 +114,10 @@ public struct Briefing: Equatable, Sendable {
 
         // One suggested next action, by simple priority.
         let suggestion: String
-        if let o = overdue.first {
+        if let m = MeetingHeadsUp.next(events, now: now), MeetingHeadsUp.minutesUntil(m, now: now) <= 15 {
+            let mins = MeetingHeadsUp.minutesUntil(m, now: now)
+            suggestion = "“\(m.title)” starts in \(mins) min — a good moment for water and a quick stretch."
+        } else if let o = overdue.first {
             suggestion = "Start with “\(o.title)” — it’s past its deadline."
         } else if let t = today.first {
             suggestion = "Knock out “\(t.title)” in a \(data.focus.settings.focusMinutes)-minute focus session."
@@ -128,7 +133,8 @@ public struct Briefing: Equatable, Sendable {
 
         return Briefing(dueToday: today, overdue: overdue, upcoming: upcoming, waterML: water, waterTarget: target,
                         focusSessions: focus.sessionsCompleted, focusGoal: goal, focusMinutes: focus.focusMinutes,
-                        breaks: focus.breaksCompleted, completedToday: completed, suggestion: suggestion)
+                        breaks: focus.breaksCompleted, completedToday: completed, suggestion: suggestion,
+                        meetings: MeetingHeadsUp.restOfDay(events, now: now, calendar: calendar))
     }
 
     /// A gentle pace line: the share of the target "expected" by now across 8:00–20:00.

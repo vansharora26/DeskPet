@@ -80,6 +80,17 @@ enum PetMenu {
 
         // Status
         menu.addItem(disabled(statusLine(pet), symbol: "pawprint.fill"))
+        if let b = BatteryMonitor.shared.reading, BatteryMonitor.shared.isEnabled() {
+            let mood = BatteryMonitor.shared.mood
+            let symbol = b.isCharging ? "battery.100percent.bolt" : (b.level <= 10 ? "battery.0percent" : b.level <= 25 ? "battery.25percent" : b.level <= 60 ? "battery.50percent" : "battery.75percent")
+            let feeling: String = switch mood {
+            case .critical: " — \(pet.name) is exhausted"
+            case .low: " — \(pet.name) is feeling drained"
+            case .charging: " — charging"
+            default: ""
+            }
+            menu.addItem(disabled("Battery \(b.level)%\(feeling)", symbol: symbol))
+        }
         let s = model.hydrationSettings
         menu.addItem(disabled("Water: \(AppCommand.formatML(model.todayWaterML)) of \(AppCommand.formatML(s.dailyTargetML))", symbol: "drop"))
         if let t = model.focusTimerState {
@@ -94,8 +105,9 @@ enum PetMenu {
         menu.addItem(ActionMenuItem("Enter Focus World…", symbol: "mountain.2.fill") { a.enterWorld() })
         menu.addItem(ActionMenuItem("Talk to \(pet.name)…", symbol: "waveform") { a.talk() })
         menu.addItem(ActionMenuItem("Chat…", symbol: "bubble.left.and.text.bubble.right") { a.open(.chat) })
-        menu.addItem(ActionMenuItem("Quick Capture…", symbol: "square.and.pencil") { a.open(.capture) })
+        menu.addItem(ActionMenuItem("New Note or Task…", symbol: "note.text.badge.plus") { a.open(.capture) })
         menu.addItem(ActionMenuItem("Command Launcher…", symbol: "command") { a.open(.launcher) })
+        menu.addItem(macTools(a))
 
         // Hydration
         var water: [NSMenuItem] = s.servingSizes.map { ml in
@@ -154,6 +166,34 @@ enum PetMenu {
         }
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem("Quit DeskPet", key: includeAppItems ? "q" : "") { NSApp.terminate(nil) })
+    }
+
+    /// Screenshots, copy text, keep awake, clipboard history.
+    private static func macTools(_ a: Actions) -> NSMenuItem {
+        let tools = MacTools.shared
+        var awake: [NSMenuItem] = []
+        if let status = tools.keepAwake.statusText {
+            awake.append(disabled(status, symbol: "sun.max.fill"))
+            awake.append(ActionMenuItem("Turn Off", symbol: "moon.fill") { tools.stopKeepAwake() })
+            awake.append(.separator())
+        }
+        awake += KeepAwake.presets.map { m in
+            ActionMenuItem(KeepAwake.title(minutes: m), symbol: m == nil ? "infinity" : "clock") { tools.setKeepAwake(minutes: m) }
+        }
+        let shots = [
+            ActionMenuItem("Area", symbol: "rectangle.dashed") { tools.screenshot(.area) },
+            ActionMenuItem("Window", symbol: "macwindow") { tools.screenshot(.window) },
+            ActionMenuItem("Full Screen", symbol: "display") { tools.screenshot(.fullScreen) },
+            .separator(),
+            ActionMenuItem("Open Screenshots Folder", symbol: "folder") { tools.openScreenshotsFolder() },
+        ]
+        return submenu("Mac Tools", symbol: "wrench.and.screwdriver", [
+            submenu("Screenshot", symbol: "camera.viewfinder", shots),
+            ActionMenuItem("Copy Text from Screen", symbol: "text.viewfinder") { tools.copyTextFromScreen() },
+            ActionMenuItem("Clipboard History…", symbol: "list.clipboard") { a.open(.clipboard) },
+            ActionMenuItem("PDF Tools…", symbol: "doc.on.doc") { a.open(.pdfTools) },
+            submenu(tools.keepAwake.isActive ? "Keep Awake (On)" : "Keep Awake", symbol: tools.keepAwake.isActive ? "sun.max.fill" : "sun.max", awake),
+        ])
     }
 
     static func make(pet: PetViewModel, model: AppModel, actions: Actions) -> NSMenu {

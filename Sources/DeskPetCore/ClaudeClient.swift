@@ -4,6 +4,7 @@ import Foundation
 public enum AIError: Error, Equatable, LocalizedError {
     case notConfigured
     case unauthorized
+    case noCredits
     case forbidden(String)
     case badRequest(String)
     case modelNotFound(String)
@@ -16,8 +17,9 @@ public enum AIError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .notConfigured: return "AI isn’t set up yet. Add an API key in Settings › AI."
-        case .unauthorized: return "The API key was rejected. Check it in Settings › AI."
+        case .notConfigured: return "Claude isn’t connected yet. Connect your Claude account in Settings › AI."
+        case .unauthorized: return "Your Claude API key was rejected (it may have been deleted). Reconnect in Settings › AI."
+        case .noCredits: return "Your Anthropic account is out of API credits. Add some in the Claude Console › Billing."
         case .forbidden(let m): return "This key isn’t allowed to do that. \(m)"
         case .badRequest(let m): return "The request was rejected: \(m)"
         case .modelNotFound(let m): return "Model not available for this key: \(m). Pick another in Settings › AI."
@@ -33,7 +35,7 @@ public enum AIError: Error, Equatable, LocalizedError {
     /// Errors the user fixes in Settings › AI.
     public var needsSettings: Bool {
         switch self {
-        case .notConfigured, .unauthorized, .modelNotFound, .forbidden: return true
+        case .notConfigured, .unauthorized, .noCredits, .modelNotFound, .forbidden: return true
         default: return false
         }
     }
@@ -139,8 +141,8 @@ public struct ClaudeClient {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
         }
         var payload = body
-        // Claude Opus 5: server-side refusal fallback ("default" routing by category).
-        if config.model == "claude-opus-5" {
+        // Opus / Sonnet 5.5: server-side refusal fallback ("default" routing by category).
+        if ClaudeModelInfo.find(config.model)?.refusalFallback == true {
             request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
             payload["fallbacks"] = "default"
         }
@@ -171,6 +173,7 @@ public struct ClaudeClient {
         case 401: throw AIError.unauthorized
         case 403: throw AIError.forbidden(message)
         case 404: throw AIError.modelNotFound(config.model)
+        case 400 where message.localizedCaseInsensitiveContains("credit balance"): throw AIError.noCredits
         case 400, 413: throw AIError.badRequest(message.isEmpty ? "HTTP \(http.statusCode)" : message)
         case 429: throw AIError.rateLimited
         case 529: throw AIError.overloaded

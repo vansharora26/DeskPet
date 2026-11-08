@@ -87,9 +87,10 @@ enum IconRenderer {
             PetStage(frame: PetAnimator.frame(at: t, input), props: props, animate: true, pixel: 5)
         }
         func input(_ r: PetViewModel.Reaction?, age: TimeInterval = 0, sleeping: Bool = false, mood: PetMood = .content,
-                   mode: PetMode = .none, coat: CoatTheme = .ginger, accessory: Accessory? = nil) -> PetAnimator.Input {
+                   mode: PetMode = .none, coat: CoatTheme = .ginger, accessory: Accessory? = nil,
+                   eyes: EyeColor? = nil, battery: BatteryMood = .none, gait: PetGait = .still) -> PetAnimator.Input {
             .init(reaction: r, reactionAge: age, sleeping: sleeping, mood: mood, mode: mode, hovered: false, animate: true,
-                  coat: coat, accessory: accessory)
+                  coat: coat, accessory: accessory, eyeColor: eyes, gait: gait, battery: battery)
         }
         let reminder = PetCallout(kind: .hydration, symbol: "drop.fill",
                                   message: "Sip break? 1.2 L of 2 L so far.",
@@ -132,13 +133,38 @@ enum IconRenderer {
             .padding(20).background(Color.white).environment(\.colorScheme, .light),
                    to: dir.appendingPathComponent("voice.png"))
         try render(sheet(states), to: dir.appendingPathComponent("states.png"))
+        let battery: [PreviewTile] = [
+            PreviewTile(title: "Battery fine", stage: stage(input(nil), at: 1, props: .none)),
+            PreviewTile(title: "Low (≤20%)", stage: stage(input(nil, battery: .low), at: 3, props: .none),
+                        speech: "Feeling a bit drained… battery’s at 18%."),
+            PreviewTile(title: "Low · yawning", stage: stage(input(nil, battery: .low), at: 12.7, props: .none)),
+            PreviewTile(title: "Low · walking", stage: stage(input(nil, battery: .low, gait: .walking), at: 1.3, props: .none)),
+            PreviewTile(title: "Critical (≤10%)", stage: stage(input(nil, battery: .critical), at: 1, props: .lowBattery(t: 0.2)),
+                        speech: "So… tired… only 7% left. Plug me in?"),
+            PreviewTile(title: "Critical · nodding off", stage: stage(input(nil, battery: .critical), at: 5.5, props: .lowBattery(t: 0.2))),
+            PreviewTile(title: "Charging", stage: stage(input(nil, battery: .charging), at: 2, props: .charging(t: 2)),
+                        speech: "Ahh, power! That’s much better. ⚡"),
+            PreviewTile(title: "Low · tuxedo", stage: stage(input(nil, coat: .tuxedo, battery: .low), at: 3, props: .none)),
+        ]
+        try render(sheet(battery), to: dir.appendingPathComponent("battery.png"))
         try render(sheet(wardrobe), to: dir.appendingPathComponent("wardrobe.png"))
+        try render(sheet(CoatTheme.allCases.map {
+            PreviewTile(title: $0.title, stage: stage(input(nil, coat: $0), at: 1, props: .none))
+        }), to: dir.appendingPathComponent("coats.png"))
+        let coats = CoatTheme.allCases
+        try render(sheet(Accessory.allCases.enumerated().map { i, a in
+            PreviewTile(title: a.title, stage: stage(input(nil, coat: coats[i % coats.count], accessory: a), at: 1, props: .none))
+        } + EyeColor.allCases.map {
+            PreviewTile(title: $0 == .oddEyed ? $0.title : "\($0.title) eyes", stage: stage(input(nil, coat: .snow, eyes: $0), at: 1, props: .none))
+        }), to: dir.appendingPathComponent("accessories.png"))
     }
 
+    /// Rows of four tiles.
     private static func sheet(_ tiles: [PreviewTile]) -> some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 16) { ForEach(0..<4, id: \.self) { tiles[$0] } }
-            HStack(spacing: 16) { ForEach(4..<8, id: \.self) { tiles[$0] } }
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(Array(stride(from: 0, to: tiles.count, by: 4)), id: \.self) { row in
+                HStack(spacing: 16) { ForEach(row..<min(row + 4, tiles.count), id: \.self) { tiles[$0] } }
+            }
         }
         .padding(20)
         .background(Color.white)

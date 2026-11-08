@@ -1,6 +1,6 @@
-# DeskPet 2.3
+# DeskPet 2.4
 
-A pixel-art cat that lives on your Mac desktop — and helps you drink water,
+A cartoon cat that lives on your Mac desktop — and helps you drink water,
 focus, remember things, and get stuff done. Native Swift + SwiftUI + AppKit,
 local-first, no dependencies. AI is optional.
 
@@ -16,11 +16,12 @@ open build/DeskPet.app
 Checks:
 
 ```sh
-scripts/test.sh                          # 109 unit tests (core logic, Focus Worlds, conversation, speech text, API + license clients — offline)
-.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, voice, Focus Worlds, audio, license gates) in a temp folder
+scripts/test.sh                          # 153 unit tests (core logic, Focus Worlds, roaming, distraction guard, meetings, Mac tools, conversation, speech text, API + license clients — offline)
+.build/release/DeskPet --self-test       # end-to-end app-layer checks (chat, voice, Focus Worlds, audio, license gates, quick capture, text recognition, keep awake, clipboard, every PDF tool on real files, battery) in a temp folder
 .build/release/DeskPet --export-worlds ./shots          # renders every Focus Worlds screen to PNG (offscreen)
 .build/release/DeskPet --worlds-probe deepFocus 15      # runs a live world off-screen so you can measure CPU
-.build/release/DeskPet --export-previews ./previews   # renders every pet state to PNG
+.build/release/DeskPet --export-previews ./previews   # renders pet states, battery moods, every coat, accessory and eye colour to PNG
+.build/release/DeskPet --export-spread ./spread       # renders the hover spread and the PDF Tools window to PNG
 ```
 
 ### Releasing
@@ -41,8 +42,15 @@ processing, it keeps retrying the same submission rather than re-uploading.
 
 | Area | Highlights |
 | --- | --- |
-| **Pet** | Click to pet, drag to move, right-click for the full menu. Moods tied to real state: *focused* (headband while a focus timer runs), *resting* (mug during breaks), *thirsty* (when a water reminder is showing), *celebrating* (goal reached, session done, level up), *sleepy*, *happy*. Size, light/dark appearance, coats & accessories. |
-| **Hover bar** | Water · Focus · Chat · Capture · More. A focus countdown badge sits under the cat while a timer runs. |
+| **Pet** | Click to pet, drag to move, right-click for the full menu. Moods tied to real state: *focused* (headband while a focus timer runs), *resting* (mug during breaks), *thirsty* (when a water reminder is showing), *celebrating* (goal reached, session done, level up), *sleepy*, *happy*. Size, light/dark appearance. Drawn with smooth vector shapes, so it's crisp at any size. |
+| **Wardrobe** | 12 coats (tabby, solid, tuxedo, calico and Siamese markings, plus pastel colours), 7 eye colours including odd-eyed, and 11 accessories. |
+| **Roaming** | The pet strolls along the bottom of the screen, hops onto the tops of other windows (and rides along when they move), chases the cursor now and then, and naps when you're away. Holds still while you hover, drag, focus, talk or have a reminder open. Reads window positions only. |
+| **Distraction guard** | During focus sessions, a gentle nudge when a distracting app or site is in front for 10+ seconds, at most every few minutes, with "Hide app" and "5 more min". Sites work in Safari and Chromium browsers (asks for Automation permission once). Off by default. |
+| **Calendar heads-up** | Optional, read-only access to macOS Calendar: a bubble a few minutes before each meeting (with a Join button for Zoom/Meet/Teams links, and Pause focus if a session is running), plus today's schedule in Today and the briefing. Off by default. |
+| **Mac Tools** | **Screenshots** (⌃⌥S, or the camera on the hover bar): drag an area, Space for a window, or full screen from the menu. Copied to the clipboard and saved to Pictures › DeskPet Screenshots, with a corner preview you can click, drag into any app, or turn into text. **Copy text from screen** (⌃⌥T): drag over anything and the text goes to your clipboard, recognised on-device, with "Save as note". **Clipboard history** (⌃⌥B): the last 30 text copies, searchable, ↩ to copy back (or paste straight in with Accessibility permission); skips password-manager copies; off until you turn it on. **Keep awake**: 30 min, 1 h, 2 h or until off; the cat wears sunglasses meanwhile. Also in the launcher: "screenshot", "copy text from screen", "keep awake for 2 hours", "let my mac sleep". |
+| **PDF tools** | A PDF Tools window (from the cat's spread, Mac Tools menu, launcher — "merge pdfs", "word to pdf", "compress pdf" — or by **dropping files on the cat**): Word/RTF/OpenDocument/HTML/text → PDF, merge PDFs and images (reorderable), images → PDF (A4, fitted), split or extract pages ("1-3, 5, 8-"), compress (keeps whichever of PDFKit or macOS's Reduce File Size filter wins), rotate all or some pages, add or remove a password, PDF → PNG pages, PDF → text (saved and copied). Results are saved next to the original with a clear suffix and never overwrite anything. All on-device with PDFKit. |
+| **Battery moods** | On MacBooks the cat reacts to the battery: at 20% or less it gets sad and lazy (droopy ears, worried brows, heavy eyelids, slouching, lazy tail, yawns, slow trudging walks, fewer jumps); at 10% or less it's exhausted, mostly stays put, nods off and shows a blinking red battery. Plugging in perks it up with a ⚡ and a thank-you; it says when it's full. The menu shows the level. Can be turned off in Settings › General. |
+| **Hover spread** | Hover the cat and nine labelled buttons spring out from behind it into two columns (one column near a screen edge): Log water · Start/pause focus · Focus World · Chat · New note · Screenshot · Copy text · PDF tools · More…. They tuck back in when you move away. A focus countdown badge sits under the cat while a timer runs. |
 | **Hydration** | One-click logging, editable servings & goal, undo, history, daily/weekly summaries, reminders with snooze/dismiss/done, quiet hours, pause-after-goal. |
 | **Focus** | Start/pause/resume/skip/reset, short & long breaks, auto-start options, history, daily goal, movement & eye-rest reminders, mute nonessential reminders while focusing. |
 | **Capture, tasks & notes** | ⌃⌥N capture (Return saves; ⌘T makes it a task; “tomorrow 5pm” becomes the deadline). Inbox / Today / Upcoming / Completed, search, edit, pin, deadlines, reminders, soft delete with undo + Recently Deleted. |
@@ -59,7 +67,10 @@ processing, it keeps retrying the same submission rather than re-uploading.
 | Shortcut | Action |
 | --- | --- |
 | ⌃⌥Space | Command launcher |
-| ⌃⌥N | Quick capture |
+| ⌃⌥N | Quick capture (new note or task) |
+| ⌃⌥S | Screenshot (area) |
+| ⌃⌥T | Copy text from screen |
+| ⌃⌥B | Clipboard history |
 | ⌃⌥C | Talk to your pet (conversation window) |
 | ⌃⌥V (hold) | Push to talk from anywhere |
 | ⌃⌥F | Enter / exit Focus Worlds |
@@ -171,15 +182,20 @@ again.
 
 DeskPet works fully without AI. To enable the assistant:
 
-**Development (your own key):** Settings › AI › paste an Anthropic API key
-(console.anthropic.com). The key is stored only in your **macOS Keychain** —
-never in source, the app bundle, UserDefaults, logs or data files. Requests go
-directly from your Mac to `api.anthropic.com`. Security limitation: anyone with
-access to your unlocked user account could read the key from the Keychain, and
-API usage is billed to that key.
+**Connect your own Claude (most people):** Settings › AI › *Connect your Claude*
+walks you through it: open the Claude Console (platform.claude.com), create an
+API key, copy it, and click **Paste & Connect**. DeskPet checks the key's shape
+(rejects Admin keys and stray spaces), saves it, and makes one tiny test call; a key
+Anthropic rejects is removed again. Usage is billed by Anthropic to your Console
+account, separately from any Claude Pro or Max plan, and "out of credits" errors
+link straight to Console › Billing. The key is stored only in your **macOS
+Keychain** — never in source, the app bundle, UserDefaults, logs or data files —
+and Settings only ever shows its last four characters. Requests go directly from
+your Mac to `api.anthropic.com`. Security limitation: anyone with access to your
+unlocked user account could read the key from the Keychain.
 
-**Production (no key in the app):** run a backend that holds the key and set
-Settings › AI › *Backend proxy URL*. DeskPet then sends requests without any
+**Company / team proxy (no key in the app):** run a backend that holds the key and set
+Settings › AI › Advanced › *proxy URL*. DeskPet then sends requests without any
 credential. `tools/dev-proxy.py` is a minimal reference (stdlib Python,
 localhost only, model allowlist, `max_tokens` cap, no body logging):
 
@@ -191,9 +207,12 @@ python3 tools/dev-proxy.py      # then use http://127.0.0.1:8787/v1/messages
 A real deployment must also authenticate users and rate-limit per user;
 otherwise the endpoint is an open relay for your credit.
 
-**Model:** Claude Opus 5 by default (Sonnet 5 / Haiku 4.5 selectable). With
-Opus 5, DeskPet opts into the API's server-side refusal fallback
-(`fallbacks: "default"`), so a declined request is retried on a suitable model.
+**Model:** Claude Opus 5.5 by default; Claude Sonnet 5.5 and Claude Haiku 5.5 are
+selectable (older saved choices move to their successor automatically). Thinking
+is left adaptive and `output_config.effort` is set to `medium` explicitly. With
+Opus 5.5 and Sonnet 5.5, DeskPet opts into the API's server-side refusal fallback
+(`fallbacks: "default"`), so a declined request is retried on a suitable model;
+Haiku 5.5 has no server-side fallback, so a refusal shows a polite message.
 
 ### What is sent to the AI
 
@@ -217,7 +236,7 @@ for the model.
 
 DeskPet is free to try for **14 days** with everything unlocked. After that, the
 pet, water tracking, the focus timer, notes, tasks and reminders stay **free
-forever**; **Focus Worlds, AI chat and voice** need a one-time license.
+forever**; **Focus Worlds, AI chat, voice, roaming, the distraction guard and calendar heads-up** need a one-time license.
 
 * **Buying:** "Buy DeskPet" opens `DPBuyURL` (default https://deskpet.app), whose
   button links to a Dodo Payments checkout. Dodo handles payment, tax and the
@@ -248,8 +267,19 @@ license is kept; deactivate it in Settings › License). There are no analytics 
 no accounts. The only network requests are AI chats you send and, once you
 activate a license key, a license check about once a week.
 
+Optional permissions, each asked for only when you turn its feature on:
+**Calendars** (calendar heads-up, read-only) and **Automation** for your browser
+(distraction guard reads the current tab's address to compare with your list).
+Also **Screen Recording** (screenshots and copy text from screen; images stay on your Mac
+and text recognition runs on-device) and **Accessibility** (only if you turn on
+"Paste right away" for clipboard history). Clipboard history is off by default; when on
+it keeps the last 30 text copies in `clipboard.json` (readable only by you) and never
+stores copies marked secret by password managers. "Delete all data" erases it.
+Roaming reads other windows' positions only (no titles or contents).
+None of this is stored or sent anywhere.
+
 Hydration goals are personal settings, not medical advice. DeskPet only knows
-what you log, and it has no calendar access.
+what you log.
 
 ## Architecture
 
@@ -298,7 +328,8 @@ Reliability notes:
 * macOS notifications and Open at Login require running the
   `.app` (not `swift run`). In-pet reminders always work.
 * Reminders only fire while DeskPet is running.
-* No calendar integration yet (planned as optional and read-only).
+* Calendar heads-up reads macOS Calendar only (add Google/Outlook accounts there).
+* The distraction guard can't read Firefox tabs (no Apple Events support); listed apps still work.
 * AI chat responses aren't streamed; a typing indicator shows while waiting.
 * Voice needs the `.app` bundle (it declares the microphone and speech
   recognition usage). On-device recognition depends on the language and Mac.

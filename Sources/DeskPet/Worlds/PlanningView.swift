@@ -29,7 +29,7 @@ struct PlanningView: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .bottom, spacing: 16) {
                     if controller.settings.showPet {
-                        WorldPet(world: world, state: .idle, coat: pet.coat, accessory: pet.accessory,
+                        WorldPet(world: world, state: .idle, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                                  motion: controller.effectiveMotion, pixel: 4, celebrateUntil: controller.celebrateUntil,
                                  active: controller.windowVisible)
                     }

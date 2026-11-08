@@ -118,11 +118,7 @@ final class ChatModel: ObservableObject {
         ClaudeClient(config: .init(model: settings.aiModel, apiKey: KeychainStore.loadAPIKey(), proxyURL: proxyURL))
     }
 
-    nonisolated static let models: [(id: String, name: String)] = [
-        ("claude-opus-5", "Claude Opus 5"),
-        ("claude-sonnet-5", "Claude Sonnet 5"),
-        ("claude-haiku-4-5", "Claude Haiku 4.5"),
-    ]
+    nonisolated static let models: [(id: String, name: String)] = ClaudeModelInfo.all.map { ($0.id, $0.name) }
 
     nonisolated static func modelName(_ id: String) -> String { models.first { $0.id == id }?.name ?? id }
 
@@ -162,10 +158,10 @@ final class ChatModel: ObservableObject {
         // 4. No AI configured: explain, keep local features working.
         guard aiState.isReady else {
             reply("""
-                I can’t answer general questions until AI is connected (Settings › AI). \
+                I can’t answer general questions until you connect your Claude account (Settings › AI — it takes a minute). \
                 I can still do these right now: “I’ve had 300 ml”, “what’s my total?”, “start a 25-minute focus session”, \
                 “add call mom to my tasks”, “remind me to stretch at 3 pm”.
-                """, spoken: "I can do DeskPet things like logging water or starting a focus session. For general questions, connect AI in Settings.")
+                """, spoken: "I can do DeskPet things like logging water or starting a focus session. For general questions, connect your Claude account in Settings.")
             persist()
             return
         }
@@ -352,9 +348,9 @@ final class ChatModel: ObservableObject {
             "messages": .array(history),
             "cache_control": ["type": "ephemeral"],
         ]
-        if settings.aiModel != "claude-haiku-4-5" {
-            body["output_config"] = ["effort": "medium"]
-        }
+        // Thinking stays adaptive (the default); effort is set explicitly because
+        // Opus 5.5 and Haiku 5.5 default to medium while Sonnet 5.5 defaults to high.
+        body["output_config"] = ["effort": "medium"]
         return body
     }
 

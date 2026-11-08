@@ -35,7 +35,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 }
 
 @Suite(.serialized) struct ClaudeClientTests {
-    func client(model: String = "claude-opus-5", key: String? = "test-key", proxy: URL? = nil,
+    func client(model: String = "claude-opus-5-5", key: String? = "test-key", proxy: URL? = nil,
                 responses: [(Int, String)]) -> ClaudeClient {
         StubProtocol.responses = responses
         StubProtocol.requests = []
@@ -56,13 +56,13 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     @Test func successParsesContentAndSendsCorrectHeaders() async throws {
         let c = client(responses: [(200, ok)])
-        let r = try await c.createMessage(["model": "claude-opus-5", "max_tokens": 10, "messages": []])
+        let r = try await c.createMessage(["model": "claude-opus-5-5", "max_tokens": 10, "messages": []])
         #expect(r["content"]?.array?.first?["text"]?.string == "Hi!")
         let req = try #require(StubProtocol.requests.first)
         #expect(req.url == ClaudeClient.directEndpoint)
         #expect(req.value(forHTTPHeaderField: "x-api-key") == "test-key")
         #expect(req.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
-        // Opus 5 opts into server-side refusal fallback.
+        // Opus 5.5 opts into server-side refusal fallback.
         #expect(req.value(forHTTPHeaderField: "anthropic-beta") == "server-side-fallback-2026-07-01")
         let body = try JSONDecoder().decode(JSONValue.self, from: try #require(StubProtocol.bodies.first))
         #expect(body["fallbacks"]?.string == "default")
@@ -70,8 +70,8 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     }
 
     @Test func otherModelsDoNotSendFallbacks() async throws {
-        let c = client(model: "claude-haiku-4-5", responses: [(200, ok)])
-        _ = try await c.createMessage(["model": "claude-haiku-4-5"])
+        let c = client(model: "claude-haiku-5-5", responses: [(200, ok)])
+        _ = try await c.createMessage(["model": "claude-haiku-5-5"])
         #expect(StubProtocol.requests.first?.value(forHTTPHeaderField: "anthropic-beta") == nil)
         let body = try JSONDecoder().decode(JSONValue.self, from: try #require(StubProtocol.bodies.first))
         #expect(body["fallbacks"] == nil)
@@ -83,6 +83,20 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         _ = try await c.createMessage(["model": "claude-opus-5"])
         #expect(StubProtocol.requests.first?.url == proxy)
         #expect(StubProtocol.requests.first?.value(forHTTPHeaderField: "x-api-key") == nil)
+    }
+
+    @Test func sonnetAlsoSendsFallback() async throws {
+        let c = client(model: "claude-sonnet-5-5", responses: [(200, ok)])
+        _ = try await c.createMessage(["model": "claude-sonnet-5-5"])
+        let body = try JSONDecoder().decode(JSONValue.self, from: try #require(StubProtocol.bodies.first))
+        #expect(body["fallbacks"]?.string == "default")
+    }
+
+    @Test func outOfCreditsIsExplained() async {
+        let c = client(responses: [(400, #"{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}"#)])
+        await #expect(throws: AIError.noCredits) { _ = try await c.createMessage(["model": "x"]) }
+        #expect(StubProtocol.requests.count == 1)
+        #expect(AIError.noCredits.needsSettings)
     }
 
     @Test func unauthorizedIsNotRetried() async {

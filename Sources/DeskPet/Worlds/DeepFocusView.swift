@@ -37,7 +37,7 @@ struct DeepFocusView: View {
             .frame(maxWidth: .infinity)
 
             if controller.settings.showPet {
-                WorldPet(world: world, state: state, coat: pet.coat, accessory: pet.accessory,
+                WorldPet(world: world, state: state, coat: pet.coat, accessory: pet.accessory, eyeColor: pet.eyeColor,
                          motion: controller.effectiveMotion, pixel: 5,
                          celebrateUntil: controller.celebrateUntil, active: controller.windowVisible)
                     .padding(.leading, 48).padding(.bottom, 24)

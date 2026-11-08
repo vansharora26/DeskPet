@@ -11,6 +11,7 @@ struct WorldPet: View {
     let state: WorldSessionState
     let coat: CoatTheme
     let accessory: Accessory?
+    var eyeColor: EyeColor?
     let motion: MotionLevel
     var pixel: CGFloat = 7
     /// Brief celebration (milestone ticked, sprint finished).
@@ -21,12 +22,12 @@ struct WorldPet: View {
         Group {
             if motion == .still || !active {
                 CatCanvas(pose: Self.frame(world: world, state: state, t: 0, animate: false, celebrating: false,
-                                           coat: coat, accessory: accessory).pose, pixel: pixel)
+                                           coat: coat, accessory: accessory, eyeColor: eyeColor).pose, pixel: pixel)
             } else {
                 Ticking(every: motion == .full ? 1.0 / 8 : 1.0 / 5) { tl in
                     let t = tl.timeIntervalSinceReferenceDate
                     let f = Self.frame(world: world, state: state, t: t, animate: true,
-                                       celebrating: tl < celebrateUntil, coat: coat, accessory: accessory)
+                                       celebrating: tl < celebrateUntil, coat: coat, accessory: accessory, eyeColor: eyeColor)
                     CatCanvas(pose: f.pose, pixel: pixel)
                         .scaleEffect(x: 1, y: f.stretch, anchor: .bottom)
                         .offset(y: -f.hop * pixel)
@@ -51,10 +52,11 @@ struct WorldPet: View {
     }
 
     static func frame(world: FocusWorld, state: WorldSessionState, t: TimeInterval, animate: Bool,
-                      celebrating: Bool, coat: CoatTheme, accessory: Accessory?) -> PetFrame {
+                      celebrating: Bool, coat: CoatTheme, accessory: Accessory?, eyeColor: EyeColor? = nil) -> PetFrame {
         var f = PetFrame()
         f.pose.coat = coat
         f.pose.accessory = accessory
+        f.pose.eyeColor = eyeColor
         if celebrating || state == .completed {
             let bounce = animate ? abs(sin(t * .pi * 1.6)) : 0.6
             f.pose.eyes = .happy

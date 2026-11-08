@@ -10,6 +10,25 @@ final class PetInteractionNSView: NSView {
     var contextMenu: () -> NSMenu? = { nil }
     /// Keyboard mode: returns true if the key was handled.
     var onKey: (NSEvent) -> Bool = { _ in false }
+    /// Files dropped on the cat (opens the PDF tools).
+    var onDropFiles: ([URL]) -> Void = { _ in }
+
+    // MARK: File drops
+
+    private func fileURLs(_ info: NSDraggingInfo) -> [URL] {
+        (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        fileURLs(sender).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(sender)
+        guard !urls.isEmpty else { return false }
+        onDropFiles(urls)
+        return true
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -77,8 +96,11 @@ struct PetInteractionView: NSViewRepresentable {
     var contextMenu: () -> NSMenu?
     var onKey: (NSEvent) -> Bool = { _ in false }
 
+    var onDropFiles: ([URL]) -> Void = { _ in }
+
     func makeNSView(context: Context) -> PetInteractionNSView {
         let view = PetInteractionNSView()
+        view.registerForDraggedTypes([.fileURL])
         update(view)
         return view
     }
@@ -93,5 +115,6 @@ struct PetInteractionView: NSViewRepresentable {
         view.onDragEnded = onDragEnded
         view.contextMenu = contextMenu
         view.onKey = onKey
+        view.onDropFiles = onDropFiles
     }
 }
