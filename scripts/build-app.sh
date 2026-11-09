@@ -7,7 +7,7 @@
 #
 # Licensing (Dodo Payments):
 #   DESKPET_DODO_ENV   test_mode (default) or live_mode — which keys the app accepts
-#   DESKPET_BUY_URL    where "Buy DeskPet" goes (default https://deskpet.app)
+#   DESKPET_BUY_URL    where "Buy DeskPet" goes (default: the live Dodo checkout)
 set -euo pipefail
 
 CONFIG="${1:-release}"
@@ -15,7 +15,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/DeskPet.app"
 VERSION="2.4.0"
 DODO_ENV="${DESKPET_DODO_ENV:-test_mode}"
-BUY_URL="${DESKPET_BUY_URL:-https://deskpet.app}"
+# Live Dodo checkout; afterwards buyers land on deskpet.app/thanks, which shows their key.
+BUY_URL="${DESKPET_BUY_URL:-https://checkout.dodopayments.com/buy/pdt_0Nq8xiHPudjp57YTyN487?quantity=1&redirect_url=https%3A%2F%2Fwww.deskpet.app%2Fthanks}"
 [[ "$DODO_ENV" == "test_mode" || "$DODO_ENV" == "live_mode" ]] || { echo "DESKPET_DODO_ENV must be test_mode or live_mode" >&2; exit 1; }
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
@@ -55,7 +56,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>      <true/>
     <key>NSHumanReadableCopyright</key>     <string>DeskPet</string>
     <key>DPDodoEnvironment</key>            <string>$DODO_ENV</string>
-    <key>DPBuyURL</key>                     <string>$BUY_URL</string>
+    <key>DPBuyURL</key>                     <string>${BUY_URL//&/&amp;}</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>DeskPet uses the microphone only while you hold or tap the talk button (or the push-to-talk shortcut), so you can talk to your pet instead of typing. It never listens in the background, and DeskPet doesn’t save recordings.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
